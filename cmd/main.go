@@ -1,12 +1,5 @@
 package main
 
-<<<<<<< HEAD
-import "fmt"
-
-func main() {
-	var intnum int16 = 100
-	fmt.Println(intnum)
-=======
 import (
 	"context"
 	"encoding/json"
@@ -150,5 +143,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
->>>>>>> main
 }
