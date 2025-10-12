@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"GO2GETHER_BACK-END/internal/dto"
 	"GO2GETHER_BACK-END/internal/middleware"
 	"GO2GETHER_BACK-END/internal/models"
 	"GO2GETHER_BACK-END/internal/utils"
@@ -26,21 +27,32 @@ func NewAuthHandler(db *pgxpool.Pool) *AuthHandler {
 }
 
 // Register handles user registration
+// @Summary Register a new user
+// @Description Create a new user account with username, email, and password
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Param request body dto.RegisterRequest true "User registration data"
+// @Success 201 {object} dto.AuthResponse "User created successfully"
+// @Failure 400 {object} dto.ErrorResponse "Invalid request data"
+// @Failure 409 {object} dto.ErrorResponse "User already exists"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
+// @Router /api/auth/register [post]
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req models.RegisterRequest
+	var req dto.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
 	}
 
 	// Validate required fields
 	if req.Username == "" || req.Email == "" || req.Password == "" {
-		writeErrorResponse(w, http.StatusBadRequest, "Missing required fields", "Username, email, and password are required")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Missing required fields", "Username, email, and password are required")
 		return
 	}
 
@@ -51,14 +63,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		req.Email, req.Username).Scan(&existingUserID)
 
 	if err == nil {
-		writeErrorResponse(w, http.StatusConflict, "User already exists", "Email or username already registered")
+		utils.WriteErrorResponse(w, http.StatusConflict, "User already exists", "Email or username already registered")
 		return
 	}
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		writeErrorResponse(w, http.StatusInternalServerError, "Failed to hash password", err.Error())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to hash password", err.Error())
 		return
 	}
 
@@ -67,7 +79,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if req.BirthDate != nil && *req.BirthDate != "" {
 		parsed, err := time.Parse("2006-01-02", *req.BirthDate)
 		if err != nil {
-			writeErrorResponse(w, http.StatusBadRequest, "Invalid birth date format", "Use YYYY-MM-DD format")
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid birth date format", "Use YYYY-MM-DD format")
 			return
 		}
 		birthDate = &parsed
@@ -87,14 +99,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		req.EmergencyContact, birthDate, "user", now, now)
 
 	if err != nil {
-		writeErrorResponse(w, http.StatusInternalServerError, "Failed to create user", err.Error())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to create user", err.Error())
 		return
 	}
 
 	// Generate JWT token
 	token, err := middleware.GenerateToken(userID, req.Username, req.Email)
 	if err != nil {
-		writeErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return
 	}
 
@@ -116,8 +128,26 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:        now,
 	}
 
-	response := models.AuthResponse{
-		User:  user,
+	// Convert user to DTO
+	userResponse := dto.UserResponse{
+		ID:               user.ID.String(),
+		Email:            user.Email,
+		Username:         user.Username,
+		DisplayName:      user.DisplayName,
+		Phone:            user.Phone,
+		FoodPreferences:  user.FoodPreferences,
+		ChronicDisease:   user.ChronicDisease,
+		AllergicFood:     user.AllergicFood,
+		AllergicDrugs:    user.AllergicDrugs,
+		EmergencyContact: user.EmergencyContact,
+		BirthDate:        req.BirthDate,
+		Role:             user.Role,
+		CreatedAt:        user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:        user.UpdatedAt.Format(time.RFC3339),
+	}
+
+	response := dto.AuthResponse{
+		User:  userResponse,
 		Token: token,
 	}
 
@@ -125,21 +155,32 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 // Login handles user login
+// @Summary Login user
+// @Description Authenticate user with email and password
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Param request body dto.LoginRequest true "Login credentials"
+// @Success 200 {object} dto.AuthResponse "Login successful"
+// @Failure 400 {object} dto.ErrorResponse "Invalid request data"
+// @Failure 401 {object} dto.ErrorResponse "Invalid credentials"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
+// @Router /api/auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req models.LoginRequest
+	var req dto.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
 	}
 
 	// Validate required fields
 	if req.Email == "" || req.Password == "" {
-		writeErrorResponse(w, http.StatusBadRequest, "Missing required fields", "Email and password are required")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Missing required fields", "Email and password are required")
 		return
 	}
 
@@ -156,29 +197,56 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		&user.FoodCategories, &user.BirthDate, &user.Role, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
-		writeErrorResponse(w, http.StatusUnauthorized, "Invalid credentials", "Email or password is incorrect")
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Invalid credentials", "Email or password is incorrect")
 		return
 	}
 
 	// Verify password
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
 	if err != nil {
-		writeErrorResponse(w, http.StatusUnauthorized, "Invalid credentials", "Email or password is incorrect")
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Invalid credentials", "Email or password is incorrect")
 		return
 	}
 
 	// Generate JWT token
 	token, err := middleware.GenerateToken(user.ID, user.Username, user.Email)
 	if err != nil {
-		writeErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return
 	}
 
 	// Clear password from response
 	user.PasswordHash = ""
 
-	response := models.AuthResponse{
-		User:  user,
+	// Convert user to DTO
+	userResponse := dto.UserResponse{
+		ID:               user.ID.String(),
+		Email:            user.Email,
+		Username:         user.Username,
+		DisplayName:      user.DisplayName,
+		Phone:            user.Phone,
+		FoodPreferences:  user.FoodPreferences,
+		ChronicDisease:   user.ChronicDisease,
+		AllergicFood:     user.AllergicFood,
+		AllergicDrugs:    user.AllergicDrugs,
+		EmergencyContact: user.EmergencyContact,
+		Activities:       user.Activities,
+		FoodCategories:   user.FoodCategories,
+		BirthDate: func() *string {
+			if user.BirthDate != nil {
+				s := user.BirthDate.Format("2006-01-02")
+				return &s
+			} else {
+				return nil
+			}
+		}(),
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
+	}
+
+	response := dto.AuthResponse{
+		User:  userResponse,
 		Token: token,
 	}
 
@@ -186,6 +254,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetProfile returns the current user's profile
+// @Summary Get user profile
+// @Description Get the current authenticated user's profile information
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} dto.UserResponse "User profile retrieved successfully"
+// @Failure 401 {object} dto.ErrorResponse "Unauthorized"
+// @Failure 404 {object} dto.ErrorResponse "User not found"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
+// @Router /api/auth/profile [get]
 func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -195,7 +274,7 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	// Get user ID from context (set by AuthMiddleware)
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
-		writeErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not authenticated")
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not authenticated")
 		return
 	}
 
@@ -212,18 +291,36 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		&user.FoodCategories, &user.BirthDate, &user.Role, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
-		writeErrorResponse(w, http.StatusNotFound, "User not found", err.Error())
+		utils.WriteErrorResponse(w, http.StatusNotFound, "User not found", err.Error())
 		return
 	}
 
-	utils.WriteJSONResponse(w, http.StatusOK, user)
-}
-
-// Helper functions
-func writeErrorResponse(w http.ResponseWriter, status int, error, message string) {
-	response := models.ErrorResponse{
-		Error:   error,
-		Message: message,
+	// Convert user to DTO
+	userResponse := dto.UserResponse{
+		ID:               user.ID.String(),
+		Email:            user.Email,
+		Username:         user.Username,
+		DisplayName:      user.DisplayName,
+		Phone:            user.Phone,
+		FoodPreferences:  user.FoodPreferences,
+		ChronicDisease:   user.ChronicDisease,
+		AllergicFood:     user.AllergicFood,
+		AllergicDrugs:    user.AllergicDrugs,
+		EmergencyContact: user.EmergencyContact,
+		Activities:       user.Activities,
+		FoodCategories:   user.FoodCategories,
+		BirthDate: func() *string {
+			if user.BirthDate != nil {
+				s := user.BirthDate.Format("2006-01-02")
+				return &s
+			} else {
+				return nil
+			}
+		}(),
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}
-	utils.WriteJSONResponse(w, status, response)
+
+	utils.WriteJSONResponse(w, http.StatusOK, userResponse)
 }
