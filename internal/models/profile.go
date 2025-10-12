@@ -7,7 +7,7 @@ import (
 )
 
 // User represents a user in the system
-type User struct {
+type Profile struct {
 	ID               uuid.UUID  `json:"id" db:"id"`
 	Email            string     `json:"email" db:"email"`
 	PasswordHash     string     `json:"-" db:"password_hash"` // Hidden from JSON responses
@@ -21,7 +21,7 @@ type User struct {
 	AllergicDrugs    *string    `json:"allergic_drugs" db:"allergic_drugs"`
 	EmergencyContact *string    `json:"emergency_contact" db:"emergency_contact"`
 	Activities       *string    `json:"activities" db:"activities"`           // JSONB as string
-	FoodCategories   []string   `json:"food_categories" db:"food_categories"` // Array as string
+	FoodCategories   *string    `json:"food_categories" db:"food_categories"` // Array as string
 	BirthDate        *time.Time `json:"birth_date" db:"birth_date"`
 	Role             string     `json:"role" db:"role"`
 	CreatedAt        time.Time  `json:"created_at" db:"created_at"`
