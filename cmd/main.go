@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,13 +14,8 @@ import (
 	"github.com/joho/godotenv"
 
 	"GO2GETHER_BACK-END/internal/handlers"
-	"GO2GETHER_BACK-END/internal/middleware"
+	"GO2GETHER_BACK-END/internal/routes"
 )
-
-type HealthResp struct {
-	Status  string `json:"status"`
-	Details any    `json:"details,omitempty"`
-}
 
 func mustEnv(k string) string {
 	v := os.Getenv(k)
@@ -81,45 +75,12 @@ func main() {
 
 	// --- HTTP Handlers ---
 
-	// 1) /healthz — basic health (ไม่แตะ DB)
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, HealthResp{Status: "ok"})
-	})
-
-	// 2) /livez — process liveness (ยังรันอยู่/รับสัญญาณ)
-	http.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, HealthResp{Status: "alive"})
-	})
-
-	// 3) /readyz — readiness (เช็คต่อ DB สำเร็จภายใน timeout)
-	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, HealthResp{
-				Status:  "degraded",
-				Details: map[string]any{"db": err.Error()},
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, HealthResp{
-			Status:  "ready",
-			Details: map[string]any{"db": "ok"},
-		})
-	})
-
-	// Initialize auth handler
+	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(pool)
+	healthHandler := handlers.NewHealthHandler(pool)
 
-	// Authentication routes
-	http.HandleFunc("/api/auth/register", authHandler.Register)
-	http.HandleFunc("/api/auth/login", authHandler.Login)
-	http.HandleFunc("/api/auth/profile", middleware.AuthMiddleware(authHandler.GetProfile))
-
-	// (ตัวอย่าง) root
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "Go2gether backend is running.")
-	})
+	// Setup all routes
+	routes.SetupRoutes(authHandler, healthHandler)
 
 	// --- HTTP Server + Graceful Shutdown ---
 	port := os.Getenv("SERVER_PORT")
@@ -151,10 +112,4 @@ func main() {
 		log.Printf("Server shutdown error: %v", err)
 	}
 	log.Println("Server stoppeded.")
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }

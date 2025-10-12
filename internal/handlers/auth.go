@@ -12,6 +12,7 @@ import (
 
 	"GO2GETHER_BACK-END/internal/middleware"
 	"GO2GETHER_BACK-END/internal/models"
+	"GO2GETHER_BACK-END/internal/utils"
 )
 
 // AuthHandler handles authentication-related HTTP requests
@@ -120,7 +121,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 	}
 
-	writeJSONResponse(w, http.StatusCreated, response)
+	utils.WriteJSONResponse(w, http.StatusCreated, response)
 }
 
 // Login handles user login
@@ -181,7 +182,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 	}
 
-	writeJSONResponse(w, http.StatusOK, response)
+	utils.WriteJSONResponse(w, http.StatusOK, response)
 }
 
 // GetProfile returns the current user's profile
@@ -215,20 +216,14 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSONResponse(w, http.StatusOK, user)
+	utils.WriteJSONResponse(w, http.StatusOK, user)
 }
 
 // Helper functions
-func writeJSONResponse(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
 func writeErrorResponse(w http.ResponseWriter, status int, error, message string) {
 	response := models.ErrorResponse{
 		Error:   error,
 		Message: message,
 	}
-	writeJSONResponse(w, status, response)
+	utils.WriteJSONResponse(w, status, response)
 }
