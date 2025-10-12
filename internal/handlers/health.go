@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"GO2GETHER_BACK-END/internal/dto"
 	"GO2GETHER_BACK-END/internal/utils"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,20 +21,14 @@ func NewHealthHandler(db *pgxpool.Pool) *HealthHandler {
 	return &HealthHandler{db: db}
 }
 
-// HealthResp represents the response structure for health checks
-type HealthResp struct {
-	Status  string `json:"status"`
-	Details any    `json:"details,omitempty"`
-}
-
 // HealthCheck handles basic health check (no database)
 func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	utils.WriteJSONResponse(w, http.StatusOK, HealthResp{Status: "ok"})
+	utils.WriteJSONResponse(w, http.StatusOK, dto.HealthResponse{Status: "ok"})
 }
 
 // LivenessCheck handles process liveness check
 func (h *HealthHandler) LivenessCheck(w http.ResponseWriter, r *http.Request) {
-	utils.WriteJSONResponse(w, http.StatusOK, HealthResp{Status: "alive"})
+	utils.WriteJSONResponse(w, http.StatusOK, dto.HealthResponse{Status: "alive"})
 }
 
 // ReadinessCheck handles readiness check (includes database connectivity)
@@ -42,14 +37,14 @@ func (h *HealthHandler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := h.db.Ping(ctx); err != nil {
-		utils.WriteJSONResponse(w, http.StatusServiceUnavailable, HealthResp{
+		utils.WriteJSONResponse(w, http.StatusServiceUnavailable, dto.HealthResponse{
 			Status:  "degraded",
 			Details: map[string]any{"db": err.Error()},
 		})
 		return
 	}
 
-	utils.WriteJSONResponse(w, http.StatusOK, HealthResp{
+	utils.WriteJSONResponse(w, http.StatusOK, dto.HealthResponse{
 		Status:  "ready",
 		Details: map[string]any{"db": "ok"},
 	})

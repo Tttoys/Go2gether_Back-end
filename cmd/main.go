@@ -80,8 +80,17 @@ func main() {
 	authHandler := handlers.NewAuthHandler(pool)
 	healthHandler := handlers.NewHealthHandler(pool)
 
+	// Initialize Google OAuth handler
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	googleRedirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
+	if googleRedirectURL == "" {
+		googleRedirectURL = "http://localhost:8080/api/auth/google/callback"
+	}
+	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, googleClientID, googleClientSecret, googleRedirectURL)
+
 	// Setup all routes
-	routes.SetupRoutes(authHandler, healthHandler)
+	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler)
 
 	// --- HTTP Server + Graceful Shutdown ---
 	port := os.Getenv("SERVER_PORT")

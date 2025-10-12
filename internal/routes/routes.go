@@ -8,7 +8,7 @@ import (
 )
 
 // SetupRoutes configures all application routes
-func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler) {
+func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, googleAuthHandler *handlers.GoogleAuthHandler) {
 	// Health check routes
 	http.HandleFunc("/healthz", healthHandler.HealthCheck)
 	http.HandleFunc("/livez", healthHandler.LivenessCheck)
@@ -18,6 +18,10 @@ func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.Heal
 	http.HandleFunc("/api/auth/register", authHandler.Register)
 	http.HandleFunc("/api/auth/login", authHandler.Login)
 	http.HandleFunc("/api/auth/profile", middleware.AuthMiddleware(authHandler.GetProfile))
+
+	// Google OAuth routes
+	http.HandleFunc("/api/auth/google/login", googleAuthHandler.GoogleLogin)
+	http.HandleFunc("/api/auth/google/callback", googleAuthHandler.GoogleCallback)
 
 	// Root route with 404 handling
 	http.HandleFunc("/", rootHandler)
