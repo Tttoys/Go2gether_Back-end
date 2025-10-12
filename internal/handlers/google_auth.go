@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -78,31 +77,30 @@ func (h *GoogleAuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) 
 // @Tags authentication
 // @Accept json
 // @Produce json
-// @Param request body GoogleLoginRequest true "Google OAuth code"
+// @Param code query string true "Authorization code from Google"
+// @Param state query string false "State parameter for CSRF protection"
 // @Success 200 {object} models.AuthResponse "Login successful"
 // @Failure 400 {object} models.ErrorResponse "Invalid request data"
 // @Failure 401 {object} models.ErrorResponse "Invalid authorization code"
 // @Failure 500 {object} models.ErrorResponse "Internal server error"
-// @Router /api/auth/google/callback [post]
+// @Router /api/auth/google/callback [get]
 func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var req dto.GoogleLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
-	}
+	// Get authorization code from query parameters
+	code := r.URL.Query().Get("code")
+	_ = r.URL.Query().Get("state") // We can add state validation later if needed
 
-	if req.Code == "" {
+	if code == "" {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Missing authorization code", "Authorization code is required")
 		return
 	}
 
 	// Exchange authorization code for token
-	token, err := h.oauth2Config.Exchange(context.Background(), req.Code)
+	token, err := h.oauth2Config.Exchange(context.Background(), code)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Invalid authorization code", err.Error())
 		return
@@ -160,7 +158,7 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 		EmergencyContact: user.EmergencyContact,
 		Activities:       user.Activities,
 		FoodCategories:   user.FoodCategories,
-		BirthDate:        &[]string{user.BirthDate.Format("2006-01-02")}[0],
+		BirthDate:        func() *string { if user.BirthDate != nil { s := user.BirthDate.Format("2006-01-02"); return &s } else { return nil } }(),
 		Role:             user.Role,
 		CreatedAt:        user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:        user.UpdatedAt.Format(time.RFC3339),
