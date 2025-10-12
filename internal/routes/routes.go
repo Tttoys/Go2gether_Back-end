@@ -19,10 +19,19 @@ func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.Heal
 	http.HandleFunc("/api/auth/login", authHandler.Login)
 	http.HandleFunc("/api/auth/profile", middleware.AuthMiddleware(authHandler.GetProfile))
 
-	// Root route
+	// Root route with 404 handling
 	http.HandleFunc("/", rootHandler)
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Go2gether backend is running."))
+	// If it's the root path, show welcome message
+	if r.URL.Path == "/" {
+		w.Write([]byte("Go2gether backend is running."))
+		return
+	}
+
+	// For all other paths, return 404
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	w.Write([]byte(`{"error": "Not Found", "message": "The requested resource was not found"}`))
 }
