@@ -489,7 +489,7 @@ const docTemplate = `{
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
 	Host:             "localhost:8080",
-	BasePath:         "/",
+	BasePath:         "",
 	Schemes:          []string{"http", "https"},
 	Title:            "Go2gether Backend API",
 	Description:      "Go2gether Backend API for travel companion matching",
