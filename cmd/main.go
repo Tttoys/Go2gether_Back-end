@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+	"github.com/rs/cors"
 
 	"GO2GETHER_BACK-END/internal/handlers"
 	"GO2GETHER_BACK-END/internal/routes"
@@ -87,8 +88,21 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	// Setup CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"}, // Allow all origins for development
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
+		AllowCredentials: true,
+	})
+
+	// Wrap the default mux with CORS
+	handler := c.Handler(http.DefaultServeMux)
+
 	srv := &http.Server{
 		Addr:              ":" + port,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
