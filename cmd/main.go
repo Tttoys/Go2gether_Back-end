@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,12 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
-)
+	"github.com/rs/cors"
 
-type HealthResp struct {
-	Status  string `json:"status"`
-	Details any    `json:"details,omitempty"`
-}
+	"GO2GETHER_BACK-END/internal/handlers"
+	"GO2GETHER_BACK-END/internal/routes"
+)
 
 func mustEnv(k string) string {
 	v := os.Getenv(k)
@@ -31,7 +29,10 @@ func mustEnv(k string) string {
 func main() {
 	// โหลด .env (ถ้า main.go อยู่ใน cmd/ และ .env อยู่ที่ root ใช้ "../.env")
 	if err := godotenv.Load("../.env"); err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
+		// ถ้าไม่เจอ .env ที่ root ลองหาใน current directory
+		if err := godotenv.Load(".env"); err != nil {
+			log.Fatalf("Error loading .env file: %v", err)
+		}
 	}
 
 	// สร้าง DSN จากค่าที่แยกใน .env
@@ -75,45 +76,33 @@ func main() {
 
 	// --- HTTP Handlers ---
 
-	// 1) /healthz — basic health (ไม่แตะ DB)
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, HealthResp{Status: "ok"})
-	})
+	// Initialize handlers
+	authHandler := handlers.NewAuthHandler(pool)
+	healthHandler := handlers.NewHealthHandler(pool)
 
-	// 2) /livez — process liveness (ยังรันอยู่/รับสัญญาณ)
-	http.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, HealthResp{Status: "alive"})
-	})
-
-	// 3) /readyz — readiness (เช็คต่อ DB สำเร็จภายใน timeout)
-	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, HealthResp{
-				Status:  "degraded",
-				Details: map[string]any{"db": err.Error()},
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, HealthResp{
-			Status:  "ready",
-			Details: map[string]any{"db": "ok"},
-		})
-	})
-
-	// (ตัวอย่าง) root
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "Go2gether backend is running.")
-	})
+	// Setup all routes
+	routes.SetupRoutes(authHandler, healthHandler)
 
 	// --- HTTP Server + Graceful Shutdown ---
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
 		port = "8080"
 	}
+
+	// Setup CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"}, // Allow all origins for development
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
+		AllowCredentials: true,
+	})
+
+	// Wrap the default mux with CORS
+	handler := c.Handler(http.DefaultServeMux)
+
 	srv := &http.Server{
 		Addr:              ":" + port,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -137,10 +126,4 @@ func main() {
 		log.Printf("Server shutdown error: %v", err)
 	}
 	log.Println("Server stoppeded.")
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }
