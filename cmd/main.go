@@ -13,6 +13,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+
+	"GO2GETHER_BACK-END/internal/handlers"
+	"GO2GETHER_BACK-END/internal/middleware"
 )
 
 type HealthResp struct {
@@ -31,7 +34,10 @@ func mustEnv(k string) string {
 func main() {
 	// โหลด .env (ถ้า main.go อยู่ใน cmd/ และ .env อยู่ที่ root ใช้ "../.env")
 	if err := godotenv.Load("../.env"); err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
+		// ถ้าไม่เจอ .env ที่ root ลองหาใน current directory
+		if err := godotenv.Load(".env"); err != nil {
+			log.Fatalf("Error loading .env file: %v", err)
+		}
 	}
 
 	// สร้าง DSN จากค่าที่แยกใน .env
@@ -101,6 +107,14 @@ func main() {
 			Details: map[string]any{"db": "ok"},
 		})
 	})
+
+	// Initialize auth handler
+	authHandler := handlers.NewAuthHandler(pool)
+
+	// Authentication routes
+	http.HandleFunc("/api/auth/register", authHandler.Register)
+	http.HandleFunc("/api/auth/login", authHandler.Login)
+	http.HandleFunc("/api/auth/profile", middleware.AuthMiddleware(authHandler.GetProfile))
 
 	// (ตัวอย่าง) root
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
