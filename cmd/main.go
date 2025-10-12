@@ -1,3 +1,19 @@
+// @title Go2gether Backend API
+// @version 1.0
+// @description Go2gether Backend API for travel companion matching
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name API Support
+// @contact.url http://www.swagger.io/support
+// @contact.email support@swagger.io
+
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
+
+// @host localhost:8080
+// @BasePath /
+// @schemes http https
+
 package main
 
 import (
@@ -14,6 +30,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 
+	_ "GO2GETHER_BACK-END/docs" // This is required for swagger
 	"GO2GETHER_BACK-END/internal/handlers"
 	"GO2GETHER_BACK-END/internal/routes"
 )

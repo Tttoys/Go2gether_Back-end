@@ -22,16 +22,38 @@ func NewHealthHandler(db *pgxpool.Pool) *HealthHandler {
 }
 
 // HealthCheck handles basic health check (no database)
+// @Summary Health check
+// @Description Basic health check endpoint
+// @Tags health
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.HealthResponse "Service is healthy"
+// @Router /healthz [get]
 func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, dto.HealthResponse{Status: "ok"})
 }
 
 // LivenessCheck handles process liveness check
+// @Summary Liveness check
+// @Description Process liveness check endpoint
+// @Tags health
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.HealthResponse "Process is alive"
+// @Router /livez [get]
 func (h *HealthHandler) LivenessCheck(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, dto.HealthResponse{Status: "alive"})
 }
 
 // ReadinessCheck handles readiness check (includes database connectivity)
+// @Summary Readiness check
+// @Description Readiness check endpoint including database connectivity
+// @Tags health
+// @Accept json
+// @Produce json
+// @Success 200 {object} dto.HealthResponse "Service is ready"
+// @Failure 503 {object} dto.HealthResponse "Service is degraded"
+// @Router /readyz [get]
 func (h *HealthHandler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()

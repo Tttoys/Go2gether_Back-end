@@ -27,6 +27,17 @@ func NewAuthHandler(db *pgxpool.Pool) *AuthHandler {
 }
 
 // Register handles user registration
+// @Summary Register a new user
+// @Description Create a new user account with username, email, and password
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Param request body dto.RegisterRequest true "User registration data"
+// @Success 201 {object} dto.AuthResponse "User created successfully"
+// @Failure 400 {object} dto.ErrorResponse "Invalid request data"
+// @Failure 409 {object} dto.ErrorResponse "User already exists"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
+// @Router /api/auth/register [post]
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -144,6 +155,17 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 // Login handles user login
+// @Summary Login user
+// @Description Authenticate user with email and password
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Param request body dto.LoginRequest true "Login credentials"
+// @Success 200 {object} dto.AuthResponse "Login successful"
+// @Failure 400 {object} dto.ErrorResponse "Invalid request data"
+// @Failure 401 {object} dto.ErrorResponse "Invalid credentials"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
+// @Router /api/auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -210,10 +232,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		EmergencyContact: user.EmergencyContact,
 		Activities:       user.Activities,
 		FoodCategories:   user.FoodCategories,
-		BirthDate:        func() *string { if user.BirthDate != nil { s := user.BirthDate.Format("2006-01-02"); return &s } else { return nil } }(),
-		Role:             user.Role,
-		CreatedAt:        user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:        user.UpdatedAt.Format(time.RFC3339),
+		BirthDate: func() *string {
+			if user.BirthDate != nil {
+				s := user.BirthDate.Format("2006-01-02")
+				return &s
+			} else {
+				return nil
+			}
+		}(),
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}
 
 	response := dto.AuthResponse{
@@ -225,6 +254,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetProfile returns the current user's profile
+// @Summary Get user profile
+// @Description Get the current authenticated user's profile information
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} dto.UserResponse "User profile retrieved successfully"
+// @Failure 401 {object} dto.ErrorResponse "Unauthorized"
+// @Failure 404 {object} dto.ErrorResponse "User not found"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
+// @Router /api/auth/profile [get]
 func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -269,10 +309,17 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		EmergencyContact: user.EmergencyContact,
 		Activities:       user.Activities,
 		FoodCategories:   user.FoodCategories,
-		BirthDate:        func() *string { if user.BirthDate != nil { s := user.BirthDate.Format("2006-01-02"); return &s } else { return nil } }(),
-		Role:             user.Role,
-		CreatedAt:        user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:        user.UpdatedAt.Format(time.RFC3339),
+		BirthDate: func() *string {
+			if user.BirthDate != nil {
+				s := user.BirthDate.Format("2006-01-02")
+				return &s
+			} else {
+				return nil
+			}
+		}(),
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}
 
 	utils.WriteJSONResponse(w, http.StatusOK, userResponse)

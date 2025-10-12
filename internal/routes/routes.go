@@ -5,6 +5,8 @@ import (
 
 	"GO2GETHER_BACK-END/internal/handlers"
 	"GO2GETHER_BACK-END/internal/middleware"
+
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 // SetupRoutes configures all application routes
@@ -22,6 +24,11 @@ func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.Heal
 	// Google OAuth routes
 	http.HandleFunc("/api/auth/google/login", googleAuthHandler.GoogleLogin)
 	http.HandleFunc("/api/auth/google/callback", googleAuthHandler.GoogleCallback)
+
+	// Swagger documentation (must be registered before root handler)
+	http.Handle("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("http://localhost:8080/swagger/doc.json"),
+	))
 
 	// Root route with 404 handling
 	http.HandleFunc("/", rootHandler)

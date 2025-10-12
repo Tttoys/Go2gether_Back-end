@@ -79,10 +79,10 @@ func (h *GoogleAuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) 
 // @Produce json
 // @Param code query string true "Authorization code from Google"
 // @Param state query string false "State parameter for CSRF protection"
-// @Success 200 {object} models.AuthResponse "Login successful"
-// @Failure 400 {object} models.ErrorResponse "Invalid request data"
-// @Failure 401 {object} models.ErrorResponse "Invalid authorization code"
-// @Failure 500 {object} models.ErrorResponse "Internal server error"
+// @Success 200 {object} dto.AuthResponse "Login successful"
+// @Failure 400 {object} dto.ErrorResponse "Invalid request data"
+// @Failure 401 {object} dto.ErrorResponse "Invalid authorization code"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
 // @Router /api/auth/google/callback [get]
 func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -158,10 +158,17 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 		EmergencyContact: user.EmergencyContact,
 		Activities:       user.Activities,
 		FoodCategories:   user.FoodCategories,
-		BirthDate:        func() *string { if user.BirthDate != nil { s := user.BirthDate.Format("2006-01-02"); return &s } else { return nil } }(),
-		Role:             user.Role,
-		CreatedAt:        user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:        user.UpdatedAt.Format(time.RFC3339),
+		BirthDate: func() *string {
+			if user.BirthDate != nil {
+				s := user.BirthDate.Format("2006-01-02")
+				return &s
+			} else {
+				return nil
+			}
+		}(),
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}
 
 	response := dto.AuthResponse{
