@@ -81,3 +81,6 @@ curl -X POST http://localhost:8080/api/auth/login \
 curl -X GET http://localhost:8080/api/auth/profile \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
+
+
+{"email": "toysguru17@gmail.com"}
