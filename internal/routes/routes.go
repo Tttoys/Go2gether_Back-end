@@ -3,6 +3,7 @@ package routes
 import (
 	"net/http"
 
+	"GO2GETHER_BACK-END/internal/config"
 	"GO2GETHER_BACK-END/internal/handlers"
 	"GO2GETHER_BACK-END/internal/middleware"
 
@@ -11,7 +12,7 @@ import (
 
 // SetupRoutes configures all application routes
 func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, googleAuthHandler *handlers.GoogleAuthHandler,
-	forgotPasswordHandler *handlers.ForgotPasswordHandler) {
+	forgotPasswordHandler *handlers.ForgotPasswordHandler, cfg *config.Config) {
 	// Health check routes
 	http.HandleFunc("/healthz", healthHandler.HealthCheck)
 	http.HandleFunc("/livez", healthHandler.LivenessCheck)
@@ -20,7 +21,7 @@ func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.Heal
 	// Authentication routes
 	http.HandleFunc("/api/auth/register", authHandler.Register)
 	http.HandleFunc("/api/auth/login", authHandler.Login)
-	http.HandleFunc("/api/auth/profile", middleware.AuthMiddleware(authHandler.GetProfile))
+	http.HandleFunc("/api/auth/profile", middleware.AuthMiddleware(authHandler.GetProfile, &cfg.JWT))
 
 	// Google OAuth routes
 	http.HandleFunc("/api/auth/google/login", googleAuthHandler.GoogleLogin)

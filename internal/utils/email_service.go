@@ -6,24 +6,19 @@ package utils
 import (
 	"fmt"
 	"net/smtp"
-	"os"
+
+	"GO2GETHER_BACK-END/internal/config"
 )
 
 // EmailService handles email sending operations
 type EmailService struct {
-	from     string
-	password string
-	smtpHost string
-	smtpPort string
+	config *config.EmailConfig
 }
 
 // NewEmailService creates a new email service instance
-func NewEmailService() *EmailService {
+func NewEmailService(cfg *config.EmailConfig) *EmailService {
 	return &EmailService{
-		from:     os.Getenv("SMTP_USERNAME"), // example: your-email@gmail.com
-		password: os.Getenv("SMTP_PASSWORD"), // Gmail App Password
-		smtpHost: "smtp.gmail.com",
-		smtpPort: "587",
+		config: cfg,
 	}
 }
 
@@ -51,25 +46,30 @@ Go2gether Team
 // sendEmail sends an email using SMTP
 func (e *EmailService) sendEmail(to, subject, body string) error {
 	// Check if credentials are set
-	if e.from == "" || e.password == "" {
+	if e.config.SMTPUsername == "" || e.config.SMTPPassword == "" {
 		return fmt.Errorf("email credentials not configured")
 	}
 
 	// Setup authentication
-	auth := smtp.PlainAuth("", e.from, e.password, e.smtpHost)
+	auth := smtp.PlainAuth("", e.config.SMTPUsername, e.config.SMTPPassword, e.config.SMTPHost)
 
 	// Compose message
+	fromEmail := e.config.FromEmail
+	if fromEmail == "" {
+		fromEmail = e.config.SMTPUsername
+	}
+
 	message := []byte(fmt.Sprintf(
-		"From: %s\r\n"+
+		"From: %s <%s>\r\n"+
 			"To: %s\r\n"+
 			"Subject: %s\r\n"+
 			"\r\n"+
 			"%s\r\n",
-		e.from, to, subject, body))
+		e.config.FromName, fromEmail, to, subject, body))
 
 	// Send email
-	addr := e.smtpHost + ":" + e.smtpPort
-	err := smtp.SendMail(addr, auth, e.from, []string{to}, message)
+	addr := e.config.SMTPHost + ":" + e.config.SMTPPort
+	err := smtp.SendMail(addr, auth, fromEmail, []string{to}, message)
 	if err != nil {
 		return fmt.Errorf("failed to send email: %v", err)
 	}

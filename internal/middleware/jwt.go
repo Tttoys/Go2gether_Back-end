@@ -3,12 +3,13 @@ package middleware
 import (
 	"context"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+
+	"GO2GETHER_BACK-END/internal/config"
 )
 
 // JWTClaims represents the claims in the JWT token
@@ -19,36 +20,27 @@ type JWTClaims struct {
 	jwt.RegisteredClaims
 }
 
-// GetJWTSecret returns the JWT secret from environment variables
-func GetJWTSecret() []byte {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		secret = "your-secret-key" // Default secret for development
-	}
-	return []byte(secret)
-}
-
 // GenerateToken generates a JWT token for the given user
-func GenerateToken(userID uuid.UUID, username, email string) (string, error) {
+func GenerateToken(userID uuid.UUID, username, email string, cfg *config.JWTConfig) (string, error) {
 	claims := JWTClaims{
 		UserID:   userID,
 		Username: username,
 		Email:    email,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * 7 * time.Hour)), // 7 days
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.AccessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(GetJWTSecret())
+	return token.SignedString([]byte(cfg.Secret))
 }
 
 // ValidateToken validates a JWT token and returns the claims
-func ValidateToken(tokenString string) (*JWTClaims, error) {
+func ValidateToken(tokenString string, cfg *config.JWTConfig) (*JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return GetJWTSecret(), nil
+		return []byte(cfg.Secret), nil
 	})
 
 	if err != nil {
@@ -63,7 +55,7 @@ func ValidateToken(tokenString string) (*JWTClaims, error) {
 }
 
 // AuthMiddleware validates JWT tokens in the Authorization header
-func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+func AuthMiddleware(next http.HandlerFunc, cfg *config.JWTConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -79,7 +71,7 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		tokenString := tokenParts[1]
-		claims, err := ValidateToken(tokenString)
+		claims, err := ValidateToken(tokenString, cfg)
 		if err != nil {
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return

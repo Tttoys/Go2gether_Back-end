@@ -18,65 +18,48 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 
 	_ "GO2GETHER_BACK-END/docs" // This is required for swagger
+	"GO2GETHER_BACK-END/internal/config"
 	"GO2GETHER_BACK-END/internal/handlers"
 	"GO2GETHER_BACK-END/internal/routes"
 )
 
-func mustEnv(k string) string {
-	v := os.Getenv(k)
-	if v == "" {
-		log.Fatalf("missing env %s", k)
-	}
-	return v
-}
-
 func main() {
-	// โหลด .env (ถ้า main.go อยู่ใน cmd/ และ .env อยู่ที่ root ใช้ "../.env")
-	if err := godotenv.Load("../.env"); err != nil {
-		// ถ้าไม่เจอ .env ที่ root ลองหาใน current directory
-		if err := godotenv.Load(".env"); err != nil {
-			log.Fatalf("Error loading .env file: %v", err)
-		}
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// สร้าง DSN จากค่าที่แยกใน .env
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=%s&connect_timeout=10",
-		mustEnv("DB_USER"),
-		mustEnv("DB_PASSWORD"),
-		mustEnv("DB_HOST"),
-		mustEnv("DB_PORT"),
-		mustEnv("DB_NAME"),    // แนะนำให้เป็น "postgres" สำหรับ Supabase
-		mustEnv("DB_SSLMODE"), // "require"
-	)
-	fmt.Println("Connecting to:", dsn)
+	// Debug: Check if email is configured
+	log.Printf("Email configured: %v", cfg.IsEmailConfigured())
+
+	// Get database connection string
+	dsn := cfg.GetDSN()
+	log.Println("Connecting to:", dsn)
 
 	// ตั้งค่า pgxpool + simple protocol (จำเป็นเมื่อผ่าน PgBouncer :6543)
-	cfg, err := pgxpool.ParseConfig(dsn)
+	dbCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		log.Fatalf("parse dsn: %v", err)
 	}
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
-	cfg.ConnConfig.RuntimeParams["application_name"] = "go2gether-backend"
-	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "30000" // 30s
-	cfg.MaxConns = 5
-	cfg.MinConns = 0
-	cfg.MaxConnLifetime = time.Hour
+	dbCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	dbCfg.ConnConfig.RuntimeParams["application_name"] = "go2gether-backend"
+	dbCfg.ConnConfig.RuntimeParams["statement_timeout"] = "30000" // 30s
+	dbCfg.MaxConns = cfg.Database.MaxConns
+	dbCfg.MinConns = cfg.Database.MinConns
+	dbCfg.MaxConnLifetime = cfg.Database.MaxLifetime
 
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	pool, err := pgxpool.NewWithConfig(context.Background(), dbCfg)
 	if err != nil {
 		log.Fatalf("connect: %v", err)
 	}
@@ -84,7 +67,7 @@ func main() {
 
 	// ทดสอบ ping ตอนบูต
 	{
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Database.ConnTimeout)
 		defer cancel()
 		if err := pool.Ping(ctx); err != nil {
 			log.Fatalf("ping: %v", err)
@@ -94,48 +77,40 @@ func main() {
 	// --- HTTP Handlers ---
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(pool)
+	authHandler := handlers.NewAuthHandler(pool, cfg)
 	healthHandler := handlers.NewHealthHandler(pool)
-	forgotPasswordHandler := handlers.NewForgotPasswordHandler(pool)
+	forgotPasswordHandler := handlers.NewForgotPasswordHandler(pool, cfg)
 
 	// Initialize Google OAuth handler
-	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
-	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
-	googleRedirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
-	if googleRedirectURL == "" {
-		googleRedirectURL = "http://localhost:8080/api/auth/google/callback"
-	}
-	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, googleClientID, googleClientSecret, googleRedirectURL)
+	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, cfg.GoogleOAuth.ClientID, cfg.GoogleOAuth.ClientSecret, cfg.GoogleOAuth.RedirectURL, cfg)
 
 	// Setup all routes
-	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler, forgotPasswordHandler)
+	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler, forgotPasswordHandler, cfg)
 
 	// --- HTTP Server + Graceful Shutdown ---
-	port := os.Getenv("SERVER_PORT")
-	if port == "" {
-		port = "8080"
-	}
-
 	// Setup CORS
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"}, // Allow all origins for development
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
-		AllowCredentials: true,
+		AllowedOrigins:   cfg.CORS.AllowedOrigins,
+		AllowedMethods:   cfg.CORS.AllowedMethods,
+		AllowedHeaders:   cfg.CORS.AllowedHeaders,
+		AllowCredentials: cfg.CORS.AllowCredentials,
 	})
 
 	// Wrap the default mux with CORS
 	handler := c.Handler(http.DefaultServeMux)
 
 	srv := &http.Server{
-		Addr:              ":" + port,
+		Addr:              ":" + cfg.Server.Port,
 		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: cfg.Server.ReadTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
 
 	// รันเซิร์ฟเวอร์แบบ async
 	go func() {
-		log.Printf("HTTP server listening on :%s", port)
+		log.Printf("HTTP server listening on :%s", cfg.Server.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("ListenAndServe: %v", err)
 		}
@@ -147,10 +122,10 @@ func main() {
 	<-quit
 	log.Println("Shutting down server...")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
 	}
-	log.Println("Server stoppeded.")
+	log.Println("Server stopped.")
 }
