@@ -1,3 +1,19 @@
+// @title Go2gether Backend API
+// @version 1.0
+// @description Go2gether Backend API for travel companion matching
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name API Support
+// @contact.url http://www.swagger.io/support
+// @contact.email support@swagger.io
+
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
+
+// @host localhost:8080
+// @BasePath /
+// @schemes http https
+
 package main
 
 import (
@@ -14,6 +30,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 
+	_ "GO2GETHER_BACK-END/docs" // This is required for swagger
 	"GO2GETHER_BACK-END/internal/handlers"
 	"GO2GETHER_BACK-END/internal/routes"
 )
@@ -80,8 +97,17 @@ func main() {
 	authHandler := handlers.NewAuthHandler(pool)
 	healthHandler := handlers.NewHealthHandler(pool)
 
+	// Initialize Google OAuth handler
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	googleRedirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
+	if googleRedirectURL == "" {
+		googleRedirectURL = "http://localhost:8080/api/auth/google/callback"
+	}
+	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, googleClientID, googleClientSecret, googleRedirectURL)
+
 	// Setup all routes
-	routes.SetupRoutes(authHandler, healthHandler)
+	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler)
 
 	// --- HTTP Server + Graceful Shutdown ---
 	port := os.Getenv("SERVER_PORT")

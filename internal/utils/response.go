@@ -11,3 +11,12 @@ func WriteJSONResponse(w http.ResponseWriter, status int, data interface{}) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
+
+// WriteErrorResponse writes an error JSON response to the HTTP response writer
+func WriteErrorResponse(w http.ResponseWriter, status int, error, message string) {
+	response := map[string]string{
+		"error":   error,
+		"message": message,
+	}
+	WriteJSONResponse(w, status, response)
+}
