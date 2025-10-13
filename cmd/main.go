@@ -96,6 +96,7 @@ func main() {
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(pool)
 	healthHandler := handlers.NewHealthHandler(pool)
+	forgotPasswordHandler := handlers.NewForgotPasswordHandler(pool)
 
 	// Initialize Google OAuth handler
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
@@ -107,7 +108,7 @@ func main() {
 	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, googleClientID, googleClientSecret, googleRedirectURL)
 
 	// Setup all routes
-	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler)
+	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler, forgotPasswordHandler)
 
 	// --- HTTP Server + Graceful Shutdown ---
 	port := os.Getenv("SERVER_PORT")
