@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"GO2GETHER_BACK-END/internal/config"
 	"GO2GETHER_BACK-END/internal/dto"
 	"GO2GETHER_BACK-END/internal/middleware"
 	"GO2GETHER_BACK-END/internal/utils"
@@ -23,12 +24,18 @@ import (
 
 // ForgotPasswordHandler handles forgot password functionality
 type ForgotPasswordHandler struct {
-	db *pgxpool.Pool
+	db           *pgxpool.Pool
+	config       *config.Config
+	emailService *utils.EmailService
 }
 
 // NewForgotPasswordHandler creates a new ForgotPasswordHandler instance
-func NewForgotPasswordHandler(db *pgxpool.Pool) *ForgotPasswordHandler {
-	return &ForgotPasswordHandler{db: db}
+func NewForgotPasswordHandler(db *pgxpool.Pool, cfg *config.Config) *ForgotPasswordHandler {
+	return &ForgotPasswordHandler{
+		db:           db,
+		config:       cfg,
+		emailService: utils.NewEmailService(&cfg.Email),
+	}
 }
 
 // ForgotPassword sends verification code to user's email
@@ -114,9 +121,17 @@ func (h *ForgotPasswordHandler) ForgotPassword(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// TODO: Send verification code via email service
-	// For development, log the code
-	fmt.Printf("Verification code for %s: %s (expires in 3 minutes)\n", req.Email, code)
+	// Send verification code via email service
+	if h.config.IsEmailConfigured() {
+		err = h.emailService.SendVerificationCode(req.Email, code)
+		if err != nil {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to send email", err.Error())
+			return
+		}
+	} else {
+		// For development, log the code when email is not configured
+		fmt.Printf("Verification code for %s: %s (expires in 3 minutes)\n", req.Email, code)
+	}
 
 	response := dto.ForgotPasswordResponse{
 		Message:   "Verification code has been sent to your email",
@@ -210,7 +225,7 @@ func (h *ForgotPasswordHandler) VerifyOTP(w http.ResponseWriter, r *http.Request
 	}
 
 	// Generate reset token (valid for 10 minutes)
-	resetToken, err := middleware.GenerateResetToken(userID, req.Email, req.Code)
+	resetToken, err := middleware.GenerateResetToken(userID, req.Email, req.Code, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate reset token", err.Error())
 		return
@@ -262,7 +277,7 @@ func (h *ForgotPasswordHandler) ResetPassword(w http.ResponseWriter, r *http.Req
 	}
 
 	// Validate reset token
-	claims, err := middleware.ValidateResetToken(req.ResetToken)
+	claims, err := middleware.ValidateResetToken(req.ResetToken, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Invalid reset token", err.Error())
 		return

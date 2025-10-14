@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
+	"GO2GETHER_BACK-END/internal/config"
 	"GO2GETHER_BACK-END/internal/dto"
 	"GO2GETHER_BACK-END/internal/middleware"
 	"GO2GETHER_BACK-END/internal/models"
@@ -18,12 +19,13 @@ import (
 
 // AuthHandler handles authentication-related HTTP requests
 type AuthHandler struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	config *config.Config
 }
 
 // NewAuthHandler creates a new AuthHandler instance
-func NewAuthHandler(db *pgxpool.Pool) *AuthHandler {
-	return &AuthHandler{db: db}
+func NewAuthHandler(db *pgxpool.Pool, cfg *config.Config) *AuthHandler {
+	return &AuthHandler{db: db, config: cfg}
 }
 
 // Register handles user registration
@@ -104,7 +106,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate JWT token
-	token, err := middleware.GenerateToken(userID, req.Username, req.Email)
+	token, err := middleware.GenerateToken(userID, req.Username, req.Email, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return
@@ -209,7 +211,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate JWT token
-	token, err := middleware.GenerateToken(user.ID, user.Username, user.Email)
+	token, err := middleware.GenerateToken(user.ID, user.Username, user.Email, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return

@@ -14,6 +14,24 @@ definitions:
       message:
         type: string
     type: object
+  dto.ForgotPasswordRequest:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+    type: object
+  dto.ForgotPasswordResponse:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      expires_in:
+        example: 3 minutes
+        type: string
+      message:
+        example: Verification code has been sent to your email
+        type: string
+    type: object
   dto.HealthResponse:
     properties:
       details: {}
@@ -63,6 +81,21 @@ definitions:
     - password
     - username
     type: object
+  dto.ResetPasswordRequest:
+    properties:
+      new_password:
+        example: newPassword123
+        type: string
+      reset_token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+    type: object
+  dto.ResetPasswordResponse:
+    properties:
+      message:
+        example: Password has been reset successfully
+        type: string
+    type: object
   dto.UserResponse:
     properties:
       activities:
@@ -100,6 +133,27 @@ definitions:
       username:
         type: string
     type: object
+  dto.VerifyOTPRequest:
+    properties:
+      code:
+        example: "123456"
+        type: string
+      email:
+        example: user@example.com
+        type: string
+    type: object
+  dto.VerifyOTPResponse:
+    properties:
+      expires_in:
+        example: 10 minutes
+        type: string
+      message:
+        example: OTP verified successfully
+        type: string
+      reset_token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact:
@@ -114,6 +168,40 @@ info:
   title: Go2gether Backend API
   version: "1.0"
 paths:
+  /api/auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Send 6-digit verification code to user's email for password reset
+      parameters:
+      - description: Email address
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Verification code sent successfully
+          schema:
+            $ref: '#/definitions/dto.ForgotPasswordResponse'
+        "400":
+          description: Invalid request data
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: User not found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Request password reset
+      tags:
+      - authentication
   /api/auth/google/callback:
     get:
       consumes:
@@ -265,6 +353,74 @@ paths:
       summary: Register a new user
       tags:
       - authentication
+  /api/auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Reset user's password with new password using reset token
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Password reset successfully
+          schema:
+            $ref: '#/definitions/dto.ResetPasswordResponse'
+        "400":
+          description: Invalid request data
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Invalid or expired reset token
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Reset password
+      tags:
+      - authentication
+  /api/auth/verify-otp:
+    post:
+      consumes:
+      - application/json
+      description: Verify the 6-digit code and get a temporary reset token
+      parameters:
+      - description: Email and verification code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VerifyOTPRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OTP verified successfully
+          schema:
+            $ref: '#/definitions/dto.VerifyOTPResponse'
+        "400":
+          description: Invalid request data
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Invalid or expired code
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Verify OTP
+      tags:
+      - authentication
   /healthz:
     get:
       consumes:
@@ -317,4 +473,10 @@ paths:
 schemes:
 - http
 - https
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and JWT token.
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

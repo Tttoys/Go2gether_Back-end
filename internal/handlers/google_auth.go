@@ -12,6 +12,7 @@ import (
 	googleOAuth2 "google.golang.org/api/oauth2/v2"
 	"google.golang.org/api/option"
 
+	"GO2GETHER_BACK-END/internal/config"
 	"GO2GETHER_BACK-END/internal/dto"
 	"GO2GETHER_BACK-END/internal/middleware"
 	"GO2GETHER_BACK-END/internal/models"
@@ -22,11 +23,12 @@ import (
 type GoogleAuthHandler struct {
 	db           *pgxpool.Pool
 	oauth2Config *oauth2.Config
+	config       *config.Config
 }
 
 // NewGoogleAuthHandler creates a new GoogleAuthHandler instance
-func NewGoogleAuthHandler(db *pgxpool.Pool, clientID, clientSecret, redirectURL string) *GoogleAuthHandler {
-	config := &oauth2.Config{
+func NewGoogleAuthHandler(db *pgxpool.Pool, clientID, clientSecret, redirectURL string, cfg *config.Config) *GoogleAuthHandler {
+	oauth2Config := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURL,
@@ -39,7 +41,8 @@ func NewGoogleAuthHandler(db *pgxpool.Pool, clientID, clientSecret, redirectURL 
 
 	return &GoogleAuthHandler{
 		db:           db,
-		oauth2Config: config,
+		oauth2Config: oauth2Config,
+		config:       cfg,
 	}
 }
 
@@ -135,7 +138,7 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Generate JWT token
-	jwtToken, err := middleware.GenerateToken(user.ID, user.Username, user.Email)
+	jwtToken, err := middleware.GenerateToken(user.ID, user.Username, user.Email, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return
