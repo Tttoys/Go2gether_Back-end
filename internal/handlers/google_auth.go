@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -144,42 +145,18 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Clear password from response
-	user.PasswordHash = ""
+	// Redirect to frontend with token
+	frontendURL := "http://localhost:8081/callback"
+	redirectURL := fmt.Sprintf("%s?token=%s&user_id=%s&email=%s&display_name=%s&provider=%s&is_verified=%t",
+		frontendURL,
+		jwtToken,
+		user.ID.String(),
+		userInfo.Email,
+		userInfo.Name,
+		"google", // Since this is Google OAuth
+		userInfo.Verified)
 
-	// Convert user to DTO
-	userResponse := dto.UserResponse{
-		ID:               user.ID.String(),
-		Email:            user.Email,
-		Username:         user.Username,
-		DisplayName:      user.DisplayName,
-		Phone:            user.Phone,
-		FoodPreferences:  user.FoodPreferences,
-		ChronicDisease:   user.ChronicDisease,
-		AllergicFood:     user.AllergicFood,
-		AllergicDrugs:    user.AllergicDrugs,
-		EmergencyContact: user.EmergencyContact,
-		Activities:       user.Activities,
-		FoodCategories:   user.FoodCategories,
-		BirthDate: func() *string {
-			if user.BirthDate != nil {
-				s := user.BirthDate.Format("2006-01-02")
-				return &s
-			} else {
-				return nil
-			}
-		}(),
-		Role:      user.Role,
-		CreatedAt: user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
-	}
-
-	response := dto.AuthResponse{
-		User:  userResponse,
-		Token: jwtToken,
-	}
-
-	utils.WriteJSONResponse(w, http.StatusOK, response)
+	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
 
 // getGoogleUserInfo fetches user information from Google
