@@ -14,18 +14,16 @@ import (
 
 // JWTClaims represents the claims in the JWT token
 type JWTClaims struct {
-	UserID   uuid.UUID `json:"user_id"`
-	Username string    `json:"username"`
-	Email    string    `json:"email"`
+	UserID uuid.UUID `json:"user_id"`
+	Email  string    `json:"email"`
 	jwt.RegisteredClaims
 }
 
 // GenerateToken generates a JWT token for the given user
-func GenerateToken(userID uuid.UUID, username, email string, cfg *config.JWTConfig) (string, error) {
+func GenerateToken(userID uuid.UUID, email string, cfg *config.JWTConfig) (string, error) {
 	claims := JWTClaims{
-		UserID:   userID,
-		Username: username,
-		Email:    email,
+		UserID: userID,
+		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.AccessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -79,7 +77,6 @@ func AuthMiddleware(next http.HandlerFunc, cfg *config.JWTConfig) http.HandlerFu
 
 		// Add user info to request context
 		ctx := context.WithValue(r.Context(), "user_id", claims.UserID)
-		ctx = context.WithValue(ctx, "username", claims.Username)
 		ctx = context.WithValue(ctx, "email", claims.Email)
 
 		next.ServeHTTP(w, r.WithContext(ctx))

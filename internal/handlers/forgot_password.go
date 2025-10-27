@@ -112,9 +112,9 @@ func (h *ForgotPasswordHandler) ForgotPassword(w http.ResponseWriter, r *http.Re
 	// Store verification code in database (expires in 3 minutes)
 	expiresAt = time.Now().Add(3 * time.Minute)
 	_, err = h.db.Exec(context.Background(),
-		`INSERT INTO auth_verifications (user_id, email, code, expires_at, created_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		userID, req.Email, code, expiresAt, time.Now())
+		`INSERT INTO auth_verifications (user_id, email, code, purpose, expires_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		userID, req.Email, code, "password_reset", expiresAt, time.Now())
 
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to store verification code", err.Error())
@@ -356,6 +356,84 @@ func (h *ForgotPasswordHandler) ResetPassword(w http.ResponseWriter, r *http.Req
 
 	response := dto.ResetPasswordResponse{
 		Message: "Password has been reset successfully",
+	}
+
+	utils.WriteJSONResponse(w, http.StatusOK, response)
+}
+
+// GetOTP retrieves the latest OTP for testing/development purposes
+// @Summary Get OTP code
+// @Description Get the latest verification code for an email (Development/Testing only)
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Param request body dto.GetOTPRequest true "Email address"
+// @Success 200 {object} dto.GetOTPResponse "OTP retrieved successfully"
+// @Failure 400 {object} dto.ErrorResponse "Invalid request data"
+// @Failure 404 {object} dto.ErrorResponse "No OTP found"
+// @Failure 500 {object} dto.ErrorResponse "Internal server error"
+// @Router /api/auth/get-otp [post]
+func (h *ForgotPasswordHandler) GetOTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req dto.GetOTPRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate email
+	if req.Email == "" {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Missing required field", "Email is required")
+		return
+	}
+
+	// Get user ID
+	var userID uuid.UUID
+	err := h.db.QueryRow(context.Background(),
+		"SELECT id FROM users WHERE email = $1", req.Email).Scan(&userID)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "User not found", "No account found with this email")
+		} else {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		}
+		return
+	}
+
+	// Get latest OTP
+	var code string
+	var expiresAt time.Time
+	var used bool
+	var createdAt time.Time
+
+	err = h.db.QueryRow(context.Background(),
+		`SELECT code, expires_at, used, created_at 
+		 FROM auth_verifications 
+		 WHERE user_id = $1 AND email = $2
+		 ORDER BY created_at DESC 
+		 LIMIT 1`,
+		userID, req.Email).Scan(&code, &expiresAt, &used, &createdAt)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "No OTP found", "No verification code found for this email")
+		} else {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		}
+		return
+	}
+
+	response := dto.GetOTPResponse{
+		Email:     req.Email,
+		Code:      code,
+		ExpiresAt: expiresAt.Format(time.RFC3339),
+		Used:      used,
+		CreatedAt: createdAt.Format(time.RFC3339),
 	}
 
 	utils.WriteJSONResponse(w, http.StatusOK, response)

@@ -31,6 +31,7 @@ func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.Heal
 	http.HandleFunc("/api/auth/forgot-password", forgotPasswordHandler.ForgotPassword)
 	http.HandleFunc("/api/auth/verify-otp", forgotPasswordHandler.VerifyOTP)
 	http.HandleFunc("/api/auth/reset-password", forgotPasswordHandler.ResetPassword)
+	http.HandleFunc("/api/auth/get-otp", forgotPasswordHandler.GetOTP)
 
 	// Swagger documentation (must be registered before root handler)
 	http.Handle("/swagger/", httpSwagger.Handler(

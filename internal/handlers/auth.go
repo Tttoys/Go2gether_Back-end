@@ -53,19 +53,19 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Missing required fields", "Username, email, and password are required")
+	if req.Email == "" || req.Password == "" {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Missing required fields", "Email and password are required")
 		return
 	}
 
 	// Check if user already exists
 	var existingUserID uuid.UUID
 	err := h.db.QueryRow(context.Background(),
-		"SELECT id FROM users WHERE email = $1 OR username = $2",
-		req.Email, req.Username).Scan(&existingUserID)
+		"SELECT id FROM users WHERE email = $1",
+		req.Email).Scan(&existingUserID)
 
 	if err == nil {
-		utils.WriteErrorResponse(w, http.StatusConflict, "User already exists", "Email or username already registered")
+		utils.WriteErrorResponse(w, http.StatusConflict, "User already exists", "Email already registered")
 		return
 	}
 
@@ -76,29 +76,14 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse birth date if provided
-	var birthDate *time.Time
-	if req.BirthDate != nil && *req.BirthDate != "" {
-		parsed, err := time.Parse("2006-01-02", *req.BirthDate)
-		if err != nil {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid birth date format", "Use YYYY-MM-DD format")
-			return
-		}
-		birthDate = &parsed
-	}
-
 	// Create user
 	userID := uuid.New()
 	now := time.Now()
 
 	_, err = h.db.Exec(context.Background(),
-		`INSERT INTO users (id, email, password_hash, username, display_name, phone, 
-		 food_preferences, chronic_disease, allergic_food, allergic_drugs, 
-		 emergency_contact, birth_date, role, created_at, updated_at) 
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-		userID, req.Email, string(hashedPassword), req.Username, req.DisplayName, req.Phone,
-		req.FoodPreferences, req.ChronicDisease, req.AllergicFood, req.AllergicDrugs,
-		req.EmergencyContact, birthDate, "user", now, now)
+		`INSERT INTO users (id, email, password_hash, created_at, updated_at) 
+		 VALUES ($1, $2, $3, $4, $5)`,
+		userID, req.Email, string(hashedPassword), now, now)
 
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to create user", err.Error())
@@ -106,7 +91,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate JWT token
-	token, err := middleware.GenerateToken(userID, req.Username, req.Email, &h.config.JWT)
+	token, err := middleware.GenerateToken(userID, req.Email, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return
@@ -114,38 +99,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	// Create user object for response
 	user := models.User{
-		ID:               userID,
-		Email:            req.Email,
-		Username:         req.Username,
-		DisplayName:      req.DisplayName,
-		Phone:            req.Phone,
-		FoodPreferences:  req.FoodPreferences,
-		ChronicDisease:   req.ChronicDisease,
-		AllergicFood:     req.AllergicFood,
-		AllergicDrugs:    req.AllergicDrugs,
-		EmergencyContact: req.EmergencyContact,
-		BirthDate:        birthDate,
-		Role:             "user",
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		ID:        userID,
+		Email:     req.Email,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	// Convert user to DTO
 	userResponse := dto.UserResponse{
-		ID:               user.ID.String(),
-		Email:            user.Email,
-		Username:         user.Username,
-		DisplayName:      user.DisplayName,
-		Phone:            user.Phone,
-		FoodPreferences:  user.FoodPreferences,
-		ChronicDisease:   user.ChronicDisease,
-		AllergicFood:     user.AllergicFood,
-		AllergicDrugs:    user.AllergicDrugs,
-		EmergencyContact: user.EmergencyContact,
-		BirthDate:        req.BirthDate,
-		Role:             user.Role,
-		CreatedAt:        user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:        user.UpdatedAt.Format(time.RFC3339),
+		ID:        user.ID.String(),
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}
 
 	response := dto.AuthResponse{
@@ -189,14 +154,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Get user from database
 	var user models.User
 	err := h.db.QueryRow(context.Background(),
-		`SELECT id, email, password_hash, username, display_name, phone, 
-		 food_preferences, chronic_disease, allergic_food, allergic_drugs, 
-		 emergency_contact, activities, food_categories, birth_date, role, 
-		 created_at, updated_at FROM users WHERE email = $1`,
-		req.Email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Username,
-		&user.DisplayName, &user.Phone, &user.FoodPreferences, &user.ChronicDisease,
-		&user.AllergicFood, &user.AllergicDrugs, &user.EmergencyContact, &user.Activities,
-		&user.FoodCategories, &user.BirthDate, &user.Role, &user.CreatedAt, &user.UpdatedAt)
+		`SELECT id, email, password_hash, created_at, updated_at FROM users WHERE email = $1`,
+		req.Email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Invalid credentials", "Email or password is incorrect")
@@ -211,7 +170,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate JWT token
-	token, err := middleware.GenerateToken(user.ID, user.Username, user.Email, &h.config.JWT)
+	token, err := middleware.GenerateToken(user.ID, user.Email, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return
@@ -222,27 +181,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Convert user to DTO
 	userResponse := dto.UserResponse{
-		ID:               user.ID.String(),
-		Email:            user.Email,
-		Username:         user.Username,
-		DisplayName:      user.DisplayName,
-		Phone:            user.Phone,
-		FoodPreferences:  user.FoodPreferences,
-		ChronicDisease:   user.ChronicDisease,
-		AllergicFood:     user.AllergicFood,
-		AllergicDrugs:    user.AllergicDrugs,
-		EmergencyContact: user.EmergencyContact,
-		Activities:       user.Activities,
-		FoodCategories:   user.FoodCategories,
-		BirthDate: func() *string {
-			if user.BirthDate != nil {
-				s := user.BirthDate.Format("2006-01-02")
-				return &s
-			} else {
-				return nil
-			}
-		}(),
-		Role:      user.Role,
+		ID:        user.ID.String(),
+		Email:     user.Email,
 		CreatedAt: user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}
@@ -283,14 +223,8 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	// Get user from database
 	var user models.User
 	err := h.db.QueryRow(context.Background(),
-		`SELECT id, email, username, display_name, phone, 
-		 food_preferences, chronic_disease, allergic_food, allergic_drugs, 
-		 emergency_contact, activities, food_categories, birth_date, role, 
-		 created_at, updated_at FROM users WHERE id = $1`,
-		userID).Scan(&user.ID, &user.Email, &user.Username, &user.DisplayName,
-		&user.Phone, &user.FoodPreferences, &user.ChronicDisease, &user.AllergicFood,
-		&user.AllergicDrugs, &user.EmergencyContact, &user.Activities,
-		&user.FoodCategories, &user.BirthDate, &user.Role, &user.CreatedAt, &user.UpdatedAt)
+		`SELECT id, email, created_at, updated_at FROM users WHERE id = $1`,
+		userID).Scan(&user.ID, &user.Email, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "User not found", err.Error())
@@ -299,27 +233,8 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 	// Convert user to DTO
 	userResponse := dto.UserResponse{
-		ID:               user.ID.String(),
-		Email:            user.Email,
-		Username:         user.Username,
-		DisplayName:      user.DisplayName,
-		Phone:            user.Phone,
-		FoodPreferences:  user.FoodPreferences,
-		ChronicDisease:   user.ChronicDisease,
-		AllergicFood:     user.AllergicFood,
-		AllergicDrugs:    user.AllergicDrugs,
-		EmergencyContact: user.EmergencyContact,
-		Activities:       user.Activities,
-		FoodCategories:   user.FoodCategories,
-		BirthDate: func() *string {
-			if user.BirthDate != nil {
-				s := user.BirthDate.Format("2006-01-02")
-				return &s
-			} else {
-				return nil
-			}
-		}(),
-		Role:      user.Role,
+		ID:        user.ID.String(),
+		Email:     user.Email,
 		CreatedAt: user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}

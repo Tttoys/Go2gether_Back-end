@@ -119,14 +119,8 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 	// Check if user exists in database
 	var user models.User
 	err = h.db.QueryRow(context.Background(),
-		`SELECT id, email, password_hash, username, display_name, phone, 
-		 food_preferences, chronic_disease, allergic_food, allergic_drugs, 
-		 emergency_contact, activities, food_categories, birth_date, role, 
-		 created_at, updated_at FROM users WHERE email = $1`,
-		userInfo.Email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Username,
-		&user.DisplayName, &user.Phone, &user.FoodPreferences, &user.ChronicDisease,
-		&user.AllergicFood, &user.AllergicDrugs, &user.EmergencyContact, &user.Activities,
-		&user.FoodCategories, &user.BirthDate, &user.Role, &user.CreatedAt, &user.UpdatedAt)
+		`SELECT id, email, password_hash, created_at, updated_at FROM users WHERE email = $1`,
+		userInfo.Email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
 
 	if err != nil {
 		// User doesn't exist, create new user
@@ -138,7 +132,7 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Generate JWT token
-	jwtToken, err := middleware.GenerateToken(user.ID, user.Username, user.Email, &h.config.JWT)
+	jwtToken, err := middleware.GenerateToken(user.ID, user.Email, &h.config.JWT)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to generate token", err.Error())
 		return
@@ -149,27 +143,8 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 
 	// Convert user to DTO
 	userResponse := dto.UserResponse{
-		ID:               user.ID.String(),
-		Email:            user.Email,
-		Username:         user.Username,
-		DisplayName:      user.DisplayName,
-		Phone:            user.Phone,
-		FoodPreferences:  user.FoodPreferences,
-		ChronicDisease:   user.ChronicDisease,
-		AllergicFood:     user.AllergicFood,
-		AllergicDrugs:    user.AllergicDrugs,
-		EmergencyContact: user.EmergencyContact,
-		Activities:       user.Activities,
-		FoodCategories:   user.FoodCategories,
-		BirthDate: func() *string {
-			if user.BirthDate != nil {
-				s := user.BirthDate.Format("2006-01-02")
-				return &s
-			} else {
-				return nil
-			}
-		}(),
-		Role:      user.Role,
+		ID:        user.ID.String(),
+		Email:     user.Email,
 		CreatedAt: user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 	}
@@ -216,29 +191,19 @@ func (h *GoogleAuthHandler) createGoogleUser(googleUser *dto.GoogleUserInfo) (mo
 	userID := uuid.New()
 	now := time.Now()
 
-	// Generate a random username from email
-	username := googleUser.Email
-	if len(username) > 50 {
-		username = username[:50]
-	}
-
 	_, err := h.db.Exec(context.Background(),
-		`INSERT INTO users (id, email, password_hash, username, display_name, avatar_url, role, created_at, updated_at) 
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		userID, googleUser.Email, "", username, &googleUser.Name, &googleUser.Picture, "user", now, now)
+		`INSERT INTO users (id, email, password_hash, created_at, updated_at) 
+		 VALUES ($1, $2, $3, $4, $5)`,
+		userID, googleUser.Email, "", now, now)
 
 	if err != nil {
 		return models.User{}, err
 	}
 
 	return models.User{
-		ID:          userID,
-		Email:       googleUser.Email,
-		Username:    username,
-		DisplayName: &googleUser.Name,
-		AvatarURL:   &googleUser.Picture,
-		Role:        "user",
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:        userID,
+		Email:     googleUser.Email,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}, nil
 }

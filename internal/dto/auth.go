@@ -2,17 +2,8 @@ package dto
 
 // RegisterRequest represents the request payload for user registration
 type RegisterRequest struct {
-	Username         string  `json:"username" validate:"required,min=3,max=50"`
-	Email            string  `json:"email" validate:"required,email"`
-	Password         string  `json:"password" validate:"required,min=6"`
-	DisplayName      *string `json:"display_name,omitempty"`
-	Phone            *string `json:"phone,omitempty"`
-	FoodPreferences  *string `json:"food_preferences,omitempty"`
-	ChronicDisease   *string `json:"chronic_disease,omitempty"`
-	AllergicFood     *string `json:"allergic_food,omitempty"`
-	AllergicDrugs    *string `json:"allergic_drugs,omitempty"`
-	EmergencyContact *string `json:"emergency_contact,omitempty"`
-	BirthDate        *string `json:"birth_date,omitempty"` // Will be parsed to time.Time
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=6"`
 }
 
 // LoginRequest represents the request payload for user login
@@ -29,23 +20,10 @@ type AuthResponse struct {
 
 // UserResponse represents user data in API responses
 type UserResponse struct {
-	ID               string  `json:"id"`
-	Email            string  `json:"email"`
-	Username         string  `json:"username"`
-	DisplayName      *string `json:"display_name"`
-	AvatarURL        *string `json:"avatar_url"`
-	Phone            *string `json:"phone"`
-	FoodPreferences  *string `json:"food_preferences"`
-	ChronicDisease   *string `json:"chronic_disease"`
-	AllergicFood     *string `json:"allergic_food"`
-	AllergicDrugs    *string `json:"allergic_drugs"`
-	EmergencyContact *string `json:"emergency_contact"`
-	Activities       *string `json:"activities"`
-	FoodCategories   *string `json:"food_categories"`
-	BirthDate        *string `json:"birth_date,omitempty"`
-	Role             string  `json:"role"`
-	CreatedAt        string  `json:"created_at"`
-	UpdatedAt        string  `json:"updated_at"`
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // ErrorResponse represents an error response
@@ -88,4 +66,18 @@ type VerifyOTPResponse struct {
 // ResetPasswordResponse represents the response after password reset
 type ResetPasswordResponse struct {
 	Message string `json:"message" example:"Password has been reset successfully"`
+}
+
+// GetOTPRequest represents the request to get OTP code
+type GetOTPRequest struct {
+	Email string `json:"email" example:"user@example.com"`
+}
+
+// GetOTPResponse represents the response with OTP code
+type GetOTPResponse struct {
+	Email     string `json:"email" example:"user@example.com"`
+	Code      string `json:"code" example:"123456"`
+	ExpiresAt string `json:"expires_at" example:"2025-10-27T23:42:00Z"`
+	Used      bool   `json:"used" example:"false"`
+	CreatedAt string `json:"created_at" example:"2025-10-27T23:39:00Z"`
 }
