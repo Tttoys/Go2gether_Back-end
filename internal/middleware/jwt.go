@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"GO2GETHER_BACK-END/internal/config"
+	"GO2GETHER_BACK-END/internal/utils"
 )
 
 // JWTClaims represents the claims in the JWT token
@@ -57,21 +58,21 @@ func AuthMiddleware(next http.HandlerFunc, cfg *config.JWTConfig) http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+            utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Authorization header required")
 			return
 		}
 
 		// Extract token from "Bearer <token>"
 		tokenParts := strings.Split(authHeader, " ")
 		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
+            utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid authorization header format")
 			return
 		}
 
 		tokenString := tokenParts[1]
 		claims, err := ValidateToken(tokenString, cfg)
 		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+            utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid token")
 			return
 		}
 

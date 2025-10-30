@@ -12,7 +12,7 @@ import (
 
 // SetupRoutes configures all application routes
 func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, googleAuthHandler *handlers.GoogleAuthHandler,
-	forgotPasswordHandler *handlers.ForgotPasswordHandler, cfg *config.Config) {
+	forgotPasswordHandler *handlers.ForgotPasswordHandler, tripsHandler *handlers.TripsHandler, cfg *config.Config) {
 	// Health check routes
 	http.HandleFunc("/healthz", healthHandler.HealthCheck)
 	http.HandleFunc("/livez", healthHandler.LivenessCheck)
@@ -32,6 +32,10 @@ func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.Heal
 	http.HandleFunc("/api/auth/verify-otp", forgotPasswordHandler.VerifyOTP)
 	http.HandleFunc("/api/auth/reset-password", forgotPasswordHandler.ResetPassword)
 	http.HandleFunc("/api/auth/get-otp", forgotPasswordHandler.GetOTP)
+
+	// Trip routes (GET list/POST create, and GET detail)
+	http.HandleFunc("/api/trips", middleware.AuthMiddleware(tripsHandler.Trips, &cfg.JWT))
+	http.HandleFunc("/api/trips/", middleware.AuthMiddleware(tripsHandler.Trips, &cfg.JWT))
 
 	// Swagger documentation (must be registered before root handler)
 	http.Handle("/swagger/", httpSwagger.Handler(

@@ -42,3 +42,58 @@ CREATE INDEX IF NOT EXISTS idx_auth_verifications_user_id ON auth_verifications(
 CREATE INDEX IF NOT EXISTS idx_auth_verifications_email ON auth_verifications(email);
 CREATE INDEX IF NOT EXISTS idx_auth_verifications_code ON auth_verifications(code);
 CREATE INDEX IF NOT EXISTS idx_auth_verifications_expires_at ON auth_verifications(expires_at);
+
+-- ---------------------------------------------------------------------------
+-- Trips
+-- ---------------------------------------------------------------------------
+-- Create trips table (if not exists)
+CREATE TABLE IF NOT EXISTS trips (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    start_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft', -- draft | published | cancelled
+    total_budget DOUBLE PRECISION NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'THB',
+    creator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- Trigger to auto-update updated_at on trips
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'update_trips_updated_at'
+    ) THEN
+        CREATE TRIGGER update_trips_updated_at
+            BEFORE UPDATE ON trips
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_trips_status ON trips(status);
+CREATE INDEX IF NOT EXISTS idx_trips_creator_id ON trips(creator_id);
+CREATE INDEX IF NOT EXISTS idx_trips_created_at ON trips(created_at);
+
+-- ---------------------------------------------------------------------------
+-- Trip Members
+-- ---------------------------------------------------------------------------
+-- Each user can belong to a trip with a role and status
+CREATE TABLE IF NOT EXISTS trip_members (
+    trip_id UUID NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member',              -- creator | member
+    status TEXT NOT NULL DEFAULT 'pending',           -- pending | accepted | declined
+    availability_submitted BOOLEAN NOT NULL DEFAULT FALSE,
+    invited_at TIMESTAMP WITH TIME ZONE NULL,
+    joined_at TIMESTAMP WITH TIME ZONE NULL,
+    PRIMARY KEY (trip_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trip_members_trip_id ON trip_members(trip_id);
+CREATE INDEX IF NOT EXISTS idx_trip_members_user_id ON trip_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_trip_members_status ON trip_members(status);
