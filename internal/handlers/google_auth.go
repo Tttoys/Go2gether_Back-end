@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -138,23 +139,18 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Clear password from response
-	user.PasswordHash = ""
+	// Redirect to frontend with token and user information
+	frontendURL := "http://localhost:8081/callback"
+	redirectURL := fmt.Sprintf("%s?token=%s&user_id=%s&email=%s&display_name=%s&provider=%s&is_verified=%t",
+		frontendURL,
+		jwtToken,
+		user.ID.String(),
+		userInfo.Email,
+		userInfo.Name,
+		"google", // Since this is Google OAuth
+		userInfo.Verified)
 
-	// Convert user to DTO
-	userResponse := dto.UserResponse{
-		ID:        user.ID.String(),
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
-	}
-
-	response := dto.AuthResponse{
-		User:  userResponse,
-		Token: jwtToken,
-	}
-
-	utils.WriteJSONResponse(w, http.StatusOK, response)
+	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 }
 
 // getGoogleUserInfo fetches user information from Google
