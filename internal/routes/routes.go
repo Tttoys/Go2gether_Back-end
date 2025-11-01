@@ -11,8 +11,16 @@ import (
 )
 
 // SetupRoutes configures all application routes
-func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.HealthHandler, googleAuthHandler *handlers.GoogleAuthHandler,
-	forgotPasswordHandler *handlers.ForgotPasswordHandler, tripsHandler *handlers.TripsHandler, cfg *config.Config) {
+// SetupRoutes configures all application routes
+func SetupRoutes(
+	authHandler *handlers.AuthHandler,
+	healthHandler *handlers.HealthHandler,
+	googleAuthHandler *handlers.GoogleAuthHandler,
+	forgotPasswordHandler *handlers.ForgotPasswordHandler,
+	tripsHandler *handlers.TripsHandler,
+	profileHandler *handlers.ProfileHandler,
+	cfg *config.Config,
+) {
 	// Health check routes
 	http.HandleFunc("/healthz", healthHandler.HealthCheck)
 	http.HandleFunc("/livez", healthHandler.LivenessCheck)
@@ -36,6 +44,11 @@ func SetupRoutes(authHandler *handlers.AuthHandler, healthHandler *handlers.Heal
 	// Trip routes (GET list/POST create, and GET detail)
 	http.HandleFunc("/api/trips", middleware.AuthMiddleware(tripsHandler.Trips, &cfg.JWT))
 	http.HandleFunc("/api/trips/", middleware.AuthMiddleware(tripsHandler.Trips, &cfg.JWT))
+
+	// Profile routes
+	// 6.1 เพิ่มโปรไฟล์: POST /api/profile  (ต้องผ่าน AuthMiddleware เพื่อให้มี userID ใน context)
+	// 6.2 GET  /api/profile  (ดูโปรไฟล์ตัวเอง)
+	http.HandleFunc("/api/profile", middleware.AuthMiddleware(profileHandler.Handle, &cfg.JWT))
 
 	// Swagger documentation (must be registered before root handler)
 	http.Handle("/swagger/", httpSwagger.Handler(
