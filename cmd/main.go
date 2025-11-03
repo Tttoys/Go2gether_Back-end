@@ -35,7 +35,7 @@ import (
 	_ "GO2GETHER_BACK-END/docs" // This is required for swagger
 	"GO2GETHER_BACK-END/internal/config"
 	"GO2GETHER_BACK-END/internal/handlers"
-    "GO2GETHER_BACK-END/internal/routes"
+	"GO2GETHER_BACK-END/internal/routes"
 )
 
 func main() {
@@ -84,14 +84,15 @@ func main() {
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(pool, cfg)
 	healthHandler := handlers.NewHealthHandler(pool)
-    forgotPasswordHandler := handlers.NewForgotPasswordHandler(pool, cfg)
-    tripsHandler := handlers.NewTripsHandler(pool, cfg)
+	forgotPasswordHandler := handlers.NewForgotPasswordHandler(pool, cfg)
+	tripsHandler := handlers.NewTripsHandler(pool, cfg)
+	profileHandler := handlers.NewProfileHandler(pool)
 
 	// Initialize Google OAuth handler
 	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, cfg.GoogleOAuth.ClientID, cfg.GoogleOAuth.ClientSecret, cfg.GoogleOAuth.RedirectURL, cfg)
 
 	// Setup all routes
-    routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler, forgotPasswordHandler, tripsHandler, cfg)
+	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler, forgotPasswordHandler, tripsHandler, profileHandler, cfg)
 
 	// --- HTTP Server + Graceful Shutdown ---
 	// Setup CORS
