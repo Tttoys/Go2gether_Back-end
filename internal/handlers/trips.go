@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -68,17 +67,15 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract authenticated user id from context
-	uid := r.Context().Value("user_id")
-	userID, ok := uid.(uuid.UUID)
+	userID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
 	var req dto.CreateTripRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Basic validation
@@ -99,21 +96,15 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse dates (support YYYY-MM-DD and RFC3339)
-	parseDate := func(s string) (time.Time, error) {
-		if len(s) == 10 {
-			return time.Parse("2006-01-02", s)
-		}
-		return time.Parse(time.RFC3339, s)
-	}
-	startAt, err := parseDate(req.StartDate)
+	// Parse dates (ISO 8601 format: YYYY-MM-DD or RFC3339)
+	startAt, err := utils.ParseDate(req.StartDate)
 	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "start_date must be YYYY-MM-DD or RFC3339")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "start_date must be ISO 8601 format (YYYY-MM-DD or RFC3339)")
 		return
 	}
-	endAt, err := parseDate(req.EndDate)
+	endAt, err := utils.ParseDate(req.EndDate)
 	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_date must be YYYY-MM-DD or RFC3339")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_date must be ISO 8601 format (YYYY-MM-DD or RFC3339)")
 		return
 	}
 	if endAt.Before(startAt) {
@@ -173,15 +164,15 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		ID:          trip.ID.String(),
 		Name:        trip.Name,
 		Destination: trip.Destination,
-		StartDate:   trip.StartDate.Format("2006-01-02"),
-		EndDate:     trip.EndDate.Format("2006-01-02"),
+		StartDate:   utils.FormatDate(trip.StartDate),
+		EndDate:     utils.FormatDate(trip.EndDate),
 		Description: trip.Description,
 		Status:      trip.Status,
 		TotalBudget: trip.TotalBudget,
 		Currency:    trip.Currency,
 		CreatorID:   trip.CreatorID.String(),
-		CreatedAt:   trip.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   trip.UpdatedAt.Format(time.RFC3339),
+		CreatedAt:   utils.FormatTimestamp(trip.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(trip.UpdatedAt),
 	}}
 
 	utils.WriteJSONResponse(w, http.StatusCreated, resp)
@@ -206,7 +197,7 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure authorized (context populated by middleware)
-	if _, ok := r.Context().Value("user_id").(uuid.UUID); !ok {
+	if _, ok := utils.GetUserIDFromContext(r.Context()); !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
@@ -280,14 +271,14 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 			ID:          id.String(),
 			Name:        name,
 			Destination: destination,
-			StartDate:   startAt.Format("2006-01-02"),
-			EndDate:     endAt.Format("2006-01-02"),
+			StartDate:   utils.FormatDate(startAt),
+			EndDate:     utils.FormatDate(endAt),
 			Status:      st,
 			TotalBudget: totalBudget,
 			Currency:    currency,
 			CreatorID:   creatorID.String(),
 			MemberCount: memberCount,
-			CreatedAt:   createdAt.Format(time.RFC3339),
+			CreatedAt:   utils.FormatTimestamp(createdAt),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -324,7 +315,7 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure authorized
-	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
+	requesterID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
@@ -393,10 +384,10 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 			JoinedAt:              "",
 		}
 		if invitedAt != nil {
-			m.InvitedAt = invitedAt.Format(time.RFC3339)
+			m.InvitedAt = utils.FormatTimestamp(*invitedAt)
 		}
 		if joinedAt != nil {
-			m.JoinedAt = joinedAt.Format(time.RFC3339)
+			m.JoinedAt = utils.FormatTimestamp(*joinedAt)
 		}
 		members = append(members, m)
 	}
@@ -452,14 +443,14 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 			Name:        t.Name,
 			Destination: t.Destination,
 			Description: t.Description,
-			StartMonth:  time.Date(t.StartDate.Year(), t.StartDate.Month(), 1, 0, 0, 0, 0, t.StartDate.Location()).Format("2006-01-02"),
-			EndMonth:    time.Date(t.EndDate.Year(), t.EndDate.Month(), 1, 0, 0, 0, 0, t.EndDate.Location()).Format("2006-01-02"),
+			StartMonth:  utils.FormatMonth(t.StartDate),
+			EndMonth:    utils.FormatMonth(t.EndDate),
 			TotalBudget: t.TotalBudget,
 			Currency:    t.Currency,
 			Status:      t.Status,
 			CreatorID:   t.CreatorID.String(),
-			CreatedAt:   t.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   t.UpdatedAt.Format(time.RFC3339),
+			CreatedAt:   utils.FormatTimestamp(t.CreatedAt),
+			UpdatedAt:   utils.FormatTimestamp(t.UpdatedAt),
 		},
 		Members:     members,
 		Permissions: perms,
@@ -493,7 +484,7 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
+	requesterID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
@@ -533,9 +524,8 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.UpdateTripRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Prepare new values, default to current if nil
@@ -567,22 +557,22 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 	startDate := cur.StartDate
 	if req.StartMonth != nil {
 		sm := strings.TrimSpace(*req.StartMonth)
-		t, err := time.Parse("2006-01", sm)
+		t, err := utils.ParseMonth(sm)
 		if err != nil {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "start_month must be YYYY-MM")
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "start_month must be ISO 8601 format (YYYY-MM)")
 			return
 		}
-		startDate = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		startDate = t
 	}
 	endDate := cur.EndDate
 	if req.EndMonth != nil {
 		em := strings.TrimSpace(*req.EndMonth)
-		t, err := time.Parse("2006-01", em)
+		t, err := utils.ParseMonth(em)
 		if err != nil {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_month must be YYYY-MM")
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_month must be ISO 8601 format (YYYY-MM)")
 			return
 		}
-		endDate = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		endDate = t
 	}
 	if endDate.Before(startDate) {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_month cannot be before start_month")
@@ -622,15 +612,15 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		ID:          cur.ID.String(),
 		Name:        name,
 		Destination: destination,
-		StartDate:   startDate.Format("2006-01-02"),
-		EndDate:     endDate.Format("2006-01-02"),
+		StartDate:   utils.FormatDate(startDate),
+		EndDate:     utils.FormatDate(endDate),
 		Description: description,
 		Status:      status,
 		TotalBudget: totalBudget,
 		Currency:    cur.Currency,
 		CreatorID:   cur.CreatorID.String(),
-		CreatedAt:   cur.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   now.Format(time.RFC3339),
+		CreatedAt:   utils.FormatTimestamp(cur.CreatedAt),
+		UpdatedAt:   utils.FormatTimestamp(now),
 	}
 
 	utils.WriteJSONResponse(w, http.StatusOK, dto.CreateTripResponse{Trip: updated})
@@ -654,7 +644,7 @@ func (h *TripsHandler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
+	requesterID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return

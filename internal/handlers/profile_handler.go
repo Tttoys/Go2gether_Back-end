@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -42,7 +41,7 @@ func NewProfileHandler(pool *pgxpool.Pool) *ProfileHandler {
 // @Router       /api/profile [post]
 func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// 1) ต้องผ่าน AuthMiddleware: ดึง userID จาก context
-	userID, ok := userIDFromContext(r.Context())
+	userID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "missing user in context")
 		return
@@ -50,44 +49,38 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// 2) decode body
 	var req dto.ProfileCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 	if req.Username == "" {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", "username is required")
 		return
 	}
 
-	// 3) parse birth_date (optional) — รองรับ "YYYY-MM-DD" และ RFC3339
+	// 3) parse birth_date (optional) — ISO 8601 format: YYYY-MM-DD or RFC3339
 	var birthDatePtr *time.Time
 	if req.BirthDate != nil && *req.BirthDate != "" {
-		if t, err := time.Parse("2006-01-02", *req.BirthDate); err == nil {
-			birthDatePtr = &t
-		} else if t2, err2 := time.Parse(time.RFC3339, *req.BirthDate); err2 == nil {
-			tt := t2
-			birthDatePtr = &tt
-		} else {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", "birth_date must be ISO 8601 date or datetime")
+		t, err := utils.ParseDate(*req.BirthDate)
+		if err != nil {
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", "birth_date must be ISO 8601 format (YYYY-MM-DD or RFC3339)")
 			return
 		}
+		birthDatePtr = &t
 	}
 
 	ctx := r.Context()
 
 	// 4) ป้องกัน user เดิมมีโปรไฟล์แล้ว
 	const qHas = `select 1 from public.profiles where user_id = $1 limit 1`
-	{
-		var one int
-		err := h.pool.QueryRow(ctx, qHas, userID).Scan(&one)
-		if err == nil {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "Bad Request", "Profile already exists for this user")
-			return
-		}
-		if !errors.Is(err, pgx.ErrNoRows) && err != nil {
-			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
-			return
-		}
+	var one int
+	err := h.pool.QueryRow(ctx, qHas, userID).Scan(&one)
+	if err == nil {
+		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "Profile already exists for this user")
+		return
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
 	}
 
 	// 5) insert โปรไฟล์
@@ -103,7 +96,7 @@ insert into public.profiles(
 returning username;
 `
 	var username string
-	err := h.pool.QueryRow(
+	err = h.pool.QueryRow(
 		ctx, qIns,
 		userID, req.Username,
 		nullable(req.FirstName), nullable(req.LastName), nullable(req.DisplayName),
@@ -143,10 +136,10 @@ func (h *ProfileHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		h.Create(w, r)
 	case http.MethodGet:
 		h.GetMe(w, r)
-	case http.MethodPut: // <-- เพิ่ม
+	case http.MethodPut:
 		h.Update(w, r)
 	default:
-		utils.WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method Not Allowed", "only GET, POST are allowed")
+		utils.WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method Not Allowed", "only GET, POST, PUT are allowed")
 	}
 }
 
@@ -164,71 +157,14 @@ func (h *ProfileHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // @Router       /api/profile [get]
 func (h *ProfileHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	// 1) auth
-	userID, ok := userIDFromContext(r.Context())
+	userID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "missing user in context")
 		return
 	}
 
-	// 2) query: join users + profiles
-	const q = `
-select
-	u.id::text,
-	p.username,
-	u.email,
-	p.first_name,
-	p.last_name,
-	p.display_name,
-	p.avatar_url,
-	p.phone,
-	p.bio,
-	p.birth_date, -- date
-	p.food_preferences,
-	p.chronic_disease,
-	p.allergic_food,
-	p.allergic_drugs,
-	p.emergency_contact,
-	u.role,
-	u.created_at,
-	u.updated_at
-from public.users u
-join public.profiles p on p.user_id = u.id
-where u.id = $1
-limit 1;
-`
-	ctx := r.Context()
-
-	var (
-		id, username, email, role       string
-		firstName, lastName             *string
-		displayName, avatarURL, phone   *string
-		bio                             *string
-		birthDateNullable               *time.Time
-		foodPref, chronic, allergicFood *string
-		allergicDrugs, emergencyContact *string
-		createdAt, updatedAt            time.Time
-	)
-
-	err := h.pool.QueryRow(ctx, q, userID).Scan(
-		&id,
-		&username,
-		&email,
-		&firstName,
-		&lastName,
-		&displayName,
-		&avatarURL,
-		&phone,
-		&bio,
-		&birthDateNullable,
-		&foodPref,
-		&chronic,
-		&allergicFood,
-		&allergicDrugs,
-		&emergencyContact,
-		&role,
-		&createdAt,
-		&updatedAt,
-	)
+	// 2) query profile using helper
+	resp, err := h.fetchProfileByUserID(r.Context(), userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Profile not found")
@@ -237,31 +173,6 @@ limit 1;
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
-
-	// 3) map -> DTO
-	var resp dto.ProfileGetResponse
-	resp.User.ID = id
-	resp.User.Username = username
-	resp.User.Email = email
-	resp.User.FirstName = firstName
-	resp.User.LastName = lastName
-	resp.User.DisplayName = displayName
-	resp.User.AvatarURL = avatarURL
-	resp.User.Phone = phone
-	resp.User.Bio = bio
-	if birthDateNullable != nil {
-		// ส่งเป็น "YYYY-MM-DD" (ตามตัวอย่าง)
-		bd := birthDateNullable.Format("2006-01-02")
-		resp.User.BirthDate = &bd
-	}
-	resp.User.FoodPreferences = foodPref
-	resp.User.ChronicDisease = chronic
-	resp.User.AllergicFood = allergicFood
-	resp.User.AllergicDrugs = allergicDrugs
-	resp.User.EmergencyContact = emergencyContact
-	resp.User.Role = role
-	resp.User.CreatedAt = createdAt.UTC().Format(time.RFC3339)
-	resp.User.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
 
 	utils.WriteJSONResponse(w, http.StatusOK, resp)
 }
@@ -272,16 +183,15 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := userIDFromContext(r.Context())
+	userID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "missing user in context")
 		return
 	}
 
 	var req dto.ProfileUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// สร้างชุด SET แบบไดนามิก (อัปเดตเฉพาะฟิลด์ที่ถูกส่งมา)
@@ -325,18 +235,14 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 			args = append(args, nil)
 			i++
 		} else {
-			if t, err := time.Parse("2006-01-02", *req.BirthDate); err == nil {
-				set = append(set, fmt.Sprintf("birth_date = $%d", i))
-				args = append(args, t)
-				i++
-			} else if t2, err2 := time.Parse(time.RFC3339, *req.BirthDate); err2 == nil {
-				set = append(set, fmt.Sprintf("birth_date = $%d", i))
-				args = append(args, t2)
-				i++
-			} else {
-				utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", "birth_date must be ISO 8601 date or datetime")
+			t, err := utils.ParseDate(*req.BirthDate)
+			if err != nil {
+				utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", "birth_date must be ISO 8601 format (YYYY-MM-DD or RFC3339)")
 				return
 			}
+			set = append(set, fmt.Sprintf("birth_date = $%d", i))
+			args = append(args, t)
+			i++
 		}
 	}
 
@@ -370,7 +276,36 @@ func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// select โปรไฟล์ล่าสุดเหมือน GetMe (เพื่อสร้าง response)
+	// Fetch updated profile using helper
+	resp, err := h.fetchProfileByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Profile not found")
+			return
+		}
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]any{
+		"user":    resp.User,
+		"message": "Profile updated successfully",
+	})
+}
+
+// ---------- helpers ----------
+
+// nullable converts empty string pointer to nil pointer
+func nullable(p *string) *string {
+	if p == nil || *p == "" {
+		return nil
+	}
+	return p
+}
+
+// fetchProfileByUserID queries and maps profile data from database
+// This helper function eliminates code duplication between GetMe and Update
+func (h *ProfileHandler) fetchProfileByUserID(ctx context.Context, userID uuid.UUID) (dto.ProfileGetResponse, error) {
 	const q = `
 select
 	u.id::text,
@@ -382,7 +317,7 @@ select
 	p.avatar_url,
 	p.phone,
 	p.bio,
-	p.birth_date, -- date
+	p.birth_date,
 	p.food_preferences,
 	p.chronic_disease,
 	p.allergic_food,
@@ -396,6 +331,7 @@ join public.profiles p on p.user_id = u.id
 where u.id = $1
 limit 1;
 `
+
 	var (
 		id, username, email, role       string
 		firstName, lastName             *string
@@ -406,7 +342,8 @@ limit 1;
 		allergicDrugs, emergencyContact *string
 		createdAt, updatedAt            time.Time
 	)
-	err = h.pool.QueryRow(ctx, q, userID).Scan(
+
+	err := h.pool.QueryRow(ctx, q, userID).Scan(
 		&id,
 		&username,
 		&email,
@@ -427,74 +364,33 @@ limit 1;
 		&updatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Profile not found")
-			return
-		}
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
-		return
+		return dto.ProfileGetResponse{}, err
 	}
 
-	var res dto.ProfileGetResponse
-	res.User.ID = id
-	res.User.Username = username
-	res.User.Email = email
-	res.User.FirstName = firstName
-	res.User.LastName = lastName
-	res.User.DisplayName = displayName
-	res.User.AvatarURL = avatarURL
-	res.User.Phone = phone
-	res.User.Bio = bio
+	// Map database results to DTO
+	var resp dto.ProfileGetResponse
+	resp.User.ID = id
+	resp.User.Username = username
+	resp.User.Email = email
+	resp.User.FirstName = firstName
+	resp.User.LastName = lastName
+	resp.User.DisplayName = displayName
+	resp.User.AvatarURL = avatarURL
+	resp.User.Phone = phone
+	resp.User.Bio = bio
 	if birthDateNullable != nil {
-		bd := birthDateNullable.Format("2006-01-02")
-		res.User.BirthDate = &bd
+		// Format as ISO 8601 Date format (YYYY-MM-DD)
+		bd := utils.FormatDate(*birthDateNullable)
+		resp.User.BirthDate = &bd
 	}
-	res.User.FoodPreferences = foodPref
-	res.User.ChronicDisease = chronic
-	res.User.AllergicFood = allergicFood
-	res.User.AllergicDrugs = allergicDrugs
-	res.User.EmergencyContact = emergencyContact
-	res.User.Role = role
-	res.User.CreatedAt = createdAt.UTC().Format(time.RFC3339)
-	res.User.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+	resp.User.FoodPreferences = foodPref
+	resp.User.ChronicDisease = chronic
+	resp.User.AllergicFood = allergicFood
+	resp.User.AllergicDrugs = allergicDrugs
+	resp.User.EmergencyContact = emergencyContact
+	resp.User.Role = role
+	resp.User.CreatedAt = utils.FormatTimestamp(createdAt)
+	resp.User.UpdatedAt = utils.FormatTimestamp(updatedAt)
 
-	utils.WriteJSONResponse(w, http.StatusOK, map[string]any{
-		"user":    res.User,
-		"message": "Profile updated successfully",
-	})
-}
-
-// ---------- helpers ----------
-
-func nullable(p *string) *string {
-	if p == nil || *p == "" {
-		return nil
-	}
-	return p
-}
-
-func userIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	// ปรับ key ให้ตรงกับ AuthMiddleware ของโปรเจ็กต์คุณ
-	// รองรับทั้ง "userID" และ "user_id" (string หรือ uuid.UUID)
-	if v := ctx.Value("userID"); v != nil {
-		switch t := v.(type) {
-		case uuid.UUID:
-			return t, true
-		case string:
-			if id, err := uuid.Parse(t); err == nil {
-				return id, true
-			}
-		}
-	}
-	if v := ctx.Value("user_id"); v != nil {
-		switch t := v.(type) {
-		case uuid.UUID:
-			return t, true
-		case string:
-			if id, err := uuid.Parse(t); err == nil {
-				return id, true
-			}
-		}
-	}
-	return uuid.Nil, false
+	return resp, nil
 }
