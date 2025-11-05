@@ -3,19 +3,21 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"GO2GETHER_BACK-END/internal/config"
 	"GO2GETHER_BACK-END/internal/dto"
 	"GO2GETHER_BACK-END/internal/models"
 	"GO2GETHER_BACK-END/internal/utils"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TripsHandler manages trip-related endpoints
@@ -24,38 +26,108 @@ type TripsHandler struct {
 	config *config.Config
 }
 
-// ===== Helper: strict JSON decoder =====
-func decodeStrictJSON(r *http.Request, v interface{}) error {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(v)
-}
-
 // NewTripsHandler creates a new TripsHandler
 func NewTripsHandler(db *pgxpool.Pool, cfg *config.Config) *TripsHandler {
 	return &TripsHandler{db: db, config: cfg}
 }
 
+// --- path helper ---
+func cleanPath(p string) string {
+	if p == "/" {
+		return p
+	}
+	return strings.TrimRight(p, "/")
+}
+
 // Trips dispatches by HTTP method for /api/trips
 func (h *TripsHandler) Trips(w http.ResponseWriter, r *http.Request) {
+	path := cleanPath(r.URL.Path)
+
 	switch r.Method {
 	case http.MethodPost:
-		h.CreateTrip(w, r)
-	case http.MethodGet:
-		// If path has an ID suffix, treat as detail
-		if strings.HasPrefix(r.URL.Path, "/api/trips/") && len(r.URL.Path) > len("/api/trips/") {
-			h.TripDetail(w, r)
+		// FR3.5 POST /api/trips/{trip_id}/leave
+		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/leave") {
+			h.LeaveTrip(w, r)
 			return
 		}
-		h.ListTrips(w, r)
+		// FR3.2 POST /api/trips/{trip_id}/invitations/respond
+		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/invitations/respond") {
+			h.RespondInvitation(w, r)
+			return
+		}
+		// FR3.1 POST /api/trips/{trip_id}/invitations
+		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/invitations") {
+			h.InviteMembers(w, r)
+			return
+		}
+		// FR1.1 POST /api/trips
+		if path == "/api/trips" {
+			h.CreateTrip(w, r)
+			return
+		}
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "unknown POST route")
+		return
+
+	case http.MethodGet:
+		// FR3.3 GET /api/trips/{trip_id}/invitations
+		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/invitations") {
+			h.ListInvitations(w, r)
+			return
+		}
+		// FR1.3 GET /api/trips/{trip_id}
+		if strings.HasPrefix(path, "/api/trips/") {
+			rest := strings.TrimPrefix(path, "/api/trips/")
+			if !strings.Contains(rest, "/") {
+				h.TripDetail(w, r)
+				return
+			}
+		}
+		// FR1.2 GET /api/trips
+		if path == "/api/trips" {
+			h.ListTrips(w, r)
+			return
+		}
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "unknown GET route")
+		return
+
 	case http.MethodPut, http.MethodPatch:
-		h.UpdateTrip(w, r)
+		// FR1.4 PUT/PATCH /api/trips/{trip_id}
+		rest := strings.TrimPrefix(path, "/api/trips/")
+		if rest != "" && !strings.Contains(rest, "/") {
+			h.UpdateTrip(w, r)
+			return
+		}
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "unknown PUT/PATCH route")
+		return
+
 	case http.MethodDelete:
-		h.DeleteTrip(w, r)
+		// FR3.6 DELETE /api/trips/{trip_id}/members/{user_id}
+		if strings.HasPrefix(path, "/api/trips/") && strings.Contains(path, "/members/") {
+			h.RemoveMember(w, r)
+			return
+		}
+		// FR3.4 DELETE /api/trips/{trip_id}/invitations/{user_id}
+		if strings.HasPrefix(path, "/api/trips/") && strings.Contains(path, "/invitations/") {
+			h.CancelInvitation(w, r)
+			return
+		}
+		// FR1.5 DELETE /api/trips/{trip_id}
+		rest := strings.TrimPrefix(path, "/api/trips/")
+		if rest != "" && !strings.Contains(rest, "/") {
+			h.DeleteTrip(w, r)
+			return
+		}
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "unknown DELETE route")
+		return
+
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+//
+// ===================== FR1 (เดิม) — ไม่ได้แก้ logic =====================
+//
 
 // CreateTrip handles POST /api/trips
 // @Summary Create a new trip
@@ -74,7 +146,6 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract authenticated user id from context
 	uid := r.Context().Value("user_id")
 	userID, ok := uid.(uuid.UUID)
 	if !ok {
@@ -83,12 +154,13 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.CreateTripRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields() // กัน field แปลก
+	if err := dec.Decode(&req); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
 		return
 	}
 
-	// Basic validation
 	req.Name = strings.TrimSpace(req.Name)
 	req.Destination = strings.TrimSpace(req.Destination)
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
@@ -106,7 +178,6 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse dates (support YYYY-MM-DD and RFC3339)
 	parseDate := func(s string) (time.Time, error) {
 		if len(s) == 10 {
 			return time.Parse("2006-01-02", s)
@@ -131,7 +202,6 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	newID := uuid.New()
 
-	// Defaults for budget fields
 	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
 	if currency == "" {
 		currency = "THB"
@@ -141,8 +211,6 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		totalBudget = 0
 	}
 
-	// Insert trip with budget fields
-	// id, name, destination, start_date, end_date, description, status, total_budget, currency, creator_id, created_at, updated_at
 	_, err = h.db.Exec(context.Background(),
 		`INSERT INTO trips (id, name, destination, start_date, end_date, description, status, total_budget, currency, creator_id, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
@@ -153,7 +221,6 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-join creator as trip member (role: creator, status: accepted)
 	_, _ = h.db.Exec(context.Background(),
 		`INSERT INTO trip_members (trip_id, user_id, role, status, availability_submitted, invited_at, joined_at)
          VALUES ($1, $2, 'creator', 'accepted', FALSE, $3, $3)
@@ -212,7 +279,6 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure authorized (context populated by middleware)
 	if _, ok := r.Context().Value("user_id").(uuid.UUID); !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
@@ -243,7 +309,6 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Query total
 	var total int
 	if status == "all" {
 		if err := h.db.QueryRow(context.Background(), `SELECT COUNT(1) FROM trips`).Scan(&total); err != nil {
@@ -257,7 +322,6 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Query page of trips with member_count via subquery (avoids GROUP BY pitfalls)
 	rows, err := h.db.Query(context.Background(),
 		`SELECT t.id, t.name, t.destination, t.start_date, t.end_date, t.status, t.total_budget, t.currency, t.creator_id, t.created_at,
                 COALESCE((SELECT COUNT(DISTINCT tm.user_id) FROM trip_members tm WHERE tm.trip_id = t.id), 0) AS member_count
@@ -330,15 +394,13 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure authorized
 	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
-	// Extract id from path
-	path := r.URL.Path
+	path := cleanPath(r.URL.Path)
 	idStr := strings.TrimPrefix(path, "/api/trips/")
 	tripID, err := uuid.Parse(idStr)
 	if err != nil {
@@ -346,7 +408,6 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load trip
 	var t models.Trip
 	err = h.db.QueryRow(context.Background(),
 		`SELECT id, name, destination, start_date, end_date, description, status, total_budget, currency, creator_id, created_at, updated_at
@@ -358,7 +419,6 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Members (optional user profile fields may be unavailable, fallback to blanks)
 	rows, err := h.db.Query(context.Background(),
 		`SELECT tm.user_id, tm.role, tm.status, tm.availability_submitted, tm.invited_at, tm.joined_at,
                 COALESCE(u.email, '') as username
@@ -412,7 +472,6 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stats
 	var total, accepted, pending, availability int
 	if err := h.db.QueryRow(context.Background(), `SELECT COUNT(1) FROM trip_members WHERE trip_id = $1`, tripID).Scan(&total); err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
@@ -431,8 +490,6 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Permissions
-	// Fallback exists-check in DB in case list didn't include requester row
 	if !isCreatorMember {
 		var exists bool
 		if err := h.db.QueryRow(context.Background(),
@@ -452,7 +509,6 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 		CanManageBudget: isCreator,
 	}
 
-	// Compose response
 	resp := dto.TripDetailResponse{
 		Trip: dto.TripDetailTrip{
 			ID:          t.ID.String(),
@@ -506,15 +562,14 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract trip ID from path
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/trips/")
+	path := cleanPath(r.URL.Path)
+	idStr := strings.TrimPrefix(path, "/api/trips/")
 	tripID, err := uuid.Parse(idStr)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
 		return
 	}
 
-	// Load current trip
 	var cur models.Trip
 	err = h.db.QueryRow(context.Background(),
 		`SELECT id, name, destination, start_date, end_date, description, status, total_budget, currency, creator_id, created_at, updated_at
@@ -526,9 +581,7 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Permission: only creator can update
 	if requesterID != cur.CreatorID {
-		// As a fallback also allow if member role is creator
 		var exists bool
 		if err := h.db.QueryRow(context.Background(),
 			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
@@ -540,12 +593,13 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.UpdateTripRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
 		return
 	}
 
-	// Prepare new values, default to current if nil
 	name := cur.Name
 	if req.Name != nil {
 		name = strings.TrimSpace(*req.Name)
@@ -570,7 +624,6 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse months to first day of month
 	startDate := cur.StartDate
 	if req.StartMonth != nil {
 		sm := strings.TrimSpace(*req.StartMonth)
@@ -605,7 +658,6 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		totalBudget = *req.TotalBudget
 	}
 
-	// Update
 	now := time.Now()
 	_, err = h.db.Exec(context.Background(),
 		`UPDATE trips
@@ -667,14 +719,14 @@ func (h *TripsHandler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/trips/")
+	path := cleanPath(r.URL.Path)
+	idStr := strings.TrimPrefix(path, "/api/trips/")
 	tripID, err := uuid.Parse(idStr)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
 		return
 	}
 
-	// Ensure exists and permission
 	var creatorID uuid.UUID
 	if err := h.db.QueryRow(context.Background(), `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
@@ -682,7 +734,6 @@ func (h *TripsHandler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if requesterID != creatorID {
-		// Fallback allow if requester is creator member
 		var exists bool
 		if err := h.db.QueryRow(context.Background(),
 			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
@@ -693,7 +744,6 @@ func (h *TripsHandler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Delete trip (CASCADE will remove members if FK is set)
 	if _, err := h.db.Exec(context.Background(), `DELETE FROM trips WHERE id = $1`, tripID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 		return
@@ -702,65 +752,71 @@ func (h *TripsHandler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "Trip deleted successfully"})
 }
 
+//
+// ===================== FR3: Invitations & Membership =====================
+//
+
 // InviteMembers handles POST /api/trips/{trip_id}/invitations
-// @Summary      Invite members to a trip
-// @Description  FR3.1 เชิญสมาชิกเข้าทริป (เฉพาะ creator/creator-role member)
-// @Tags         trips
-// @Accept       json
-// @Produce      json
-// @Param        trip_id  path      string                true  "Trip ID"
-// @Param        payload  body      dto.TripInviteRequest true  "Invitation payload"
-// @Success      200      {object}  dto.TripInviteResponse
-// @Failure      400      {object}  utils.ErrorResponse
-// @Failure      401      {object}  utils.ErrorResponse
-// @Failure      403      {object}  utils.ErrorResponse
-// @Failure      404      {object}  utils.ErrorResponse
-// @Failure      500      {object}  utils.ErrorResponse
-// @Router       /api/trips/{trip_id}/invitations [post]
+// @Summary Invite members to a trip
+// @Tags trips
+// @Accept json
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Param payload body dto.TripInviteRequest true "Invitation payload"
+// @Success 200 {object} dto.TripInviteResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/invitations [post]
 func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
-	// parse /api/trips/{trip_id}/invitations
-	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
-	i := strings.Index(rest, "/")
-	if i <= 0 || !strings.HasSuffix(r.URL.Path, "/invitations") {
+	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/invitations
+	rest := strings.TrimPrefix(path, "/api/trips/")
+	idx := strings.Index(rest, "/")
+	if idx <= 0 || !strings.HasSuffix(path, "/invitations") {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
 		return
 	}
-	tripID, err := uuid.Parse(rest[:i])
+	tripIDStr := rest[:idx]
+	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
 		return
 	}
 
-	// permission: creator or creator-role member
 	var creatorID uuid.UUID
-	if err := h.db.QueryRow(r.Context(), `SELECT creator_id FROM trips WHERE id=$1`, tripID).Scan(&creatorID); err != nil {
+	if err := h.db.QueryRow(r.Context(), `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
 		return
 	}
 	if requesterID != creatorID {
-		var okCreator bool
+		var isCreatorMember bool
 		if err := h.db.QueryRow(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id=$1 AND user_id=$2 AND LOWER(role)='creator')`,
+			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
 			tripID, requesterID,
-		).Scan(&okCreator); err != nil || !okCreator {
+		).Scan(&isCreatorMember); err != nil || !isCreatorMember {
 			utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only creator can invite members")
 			return
 		}
 	}
 
 	var req dto.TripInviteRequest
-	if err := decodeStrictJSON(r, &req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body or unknown fields")
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
 		return
 	}
 	if len(req.UserIDs) == 0 {
@@ -768,9 +824,8 @@ func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// normalize UUIDs, skip self & duplicates
-	seen := map[uuid.UUID]struct{}{}
-	cands := make([]uuid.UUID, 0, len(req.UserIDs))
+	seen := make(map[uuid.UUID]struct{})
+	candidates := make([]uuid.UUID, 0, len(req.UserIDs))
 	for _, s := range req.UserIDs {
 		id, err := uuid.Parse(strings.TrimSpace(s))
 		if err != nil {
@@ -780,13 +835,13 @@ func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 		if id == requesterID {
 			continue
 		}
-		if _, dup := seen[id]; dup {
+		if _, ok := seen[id]; ok {
 			continue
 		}
 		seen[id] = struct{}{}
-		cands = append(cands, id)
+		candidates = append(candidates, id)
 	}
-	if len(cands) == 0 {
+	if len(candidates) == 0 {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "no valid user to invite")
 		return
 	}
@@ -799,19 +854,18 @@ func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 
-	// validate user exists
-	valid := make([]uuid.UUID, 0, len(cands))
-	for _, uid := range cands {
+	validUsers := make([]uuid.UUID, 0, len(candidates))
+	for _, uid := range candidates {
 		var exists bool
-		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, uid).Scan(&exists); err != nil {
+		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, uid).Scan(&exists); err != nil {
 			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 			return
 		}
 		if exists {
-			valid = append(valid, uid)
+			validUsers = append(validUsers, uid)
 		}
 	}
-	if len(valid) == 0 {
+	if len(validUsers) == 0 {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "no valid user in database")
 		return
 	}
@@ -821,57 +875,64 @@ func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 		username  *string
 		invitedAt time.Time
 	}
-	outRows := make([]invitedRow, 0, len(valid))
+	invited := make([]invitedRow, 0, len(validUsers))
 
-	for _, uid := range valid {
-		// read status if exists
-		var cur *string
-		if err := tx.QueryRow(r.Context(),
-			`SELECT status FROM trip_members WHERE trip_id=$1 AND user_id=$2`,
+	for _, uid := range validUsers {
+		var curStatus string
+		err := tx.QueryRow(r.Context(),
+			`SELECT status FROM trip_members WHERE trip_id = $1 AND user_id = $2`,
 			tripID, uid,
-		).Scan(&cur); err != nil && err.Error() != "no rows in result set" {
+		).Scan(&curStatus)
+
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 			return
 		}
 
-		if cur == nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			// insert pending
 			if _, err := tx.Exec(r.Context(),
 				`INSERT INTO trip_members (trip_id, user_id, role, status, invited_by, invited_at, availability_submitted)
-				 VALUES ($1,$2,'member','pending',$3,$4,FALSE)
-				 ON CONFLICT (trip_id,user_id) DO NOTHING`,
+                 VALUES ($1, $2, 'member', 'pending', $3, $4, FALSE)
+                 ON CONFLICT (trip_id, user_id) DO NOTHING`,
 				tripID, uid, requesterID, now,
 			); err != nil {
 				utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 				return
 			}
-			outRows = append(outRows, invitedRow{userID: uid, invitedAt: now})
-		} else {
-			switch strings.ToLower(*cur) {
-			case "accepted", "pending":
-				// skip
-				continue
-			default:
-				// reset to pending
-				if _, err := tx.Exec(r.Context(),
-					`UPDATE trip_members
-					   SET status='pending', invited_by=$3, invited_at=$4
-					 WHERE trip_id=$1 AND user_id=$2`,
-					tripID, uid, requesterID, now,
-				); err != nil {
-					utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
-					return
-				}
-				outRows = append(outRows, invitedRow{userID: uid, invitedAt: now})
+			invited = append(invited, invitedRow{userID: uid, invitedAt: now})
+			continue
+		}
+
+		switch strings.ToLower(curStatus) {
+		case "accepted", "pending":
+			// skip
+			continue
+		default:
+			// re-open as pending
+			if _, err := tx.Exec(r.Context(),
+				`UPDATE trip_members
+				   SET status = 'pending', invited_by = $3, invited_at = $4
+				 WHERE trip_id = $1 AND user_id = $2`,
+				tripID, uid, requesterID, now,
+			); err != nil {
+				utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+				return
 			}
+			invited = append(invited, invitedRow{userID: uid, invitedAt: now})
 		}
 	}
 
-	// attach username
-	for i := range outRows {
-		var u *string
-		_ = tx.QueryRow(r.Context(), `SELECT username FROM profiles WHERE user_id=$1`, outRows[i].userID).Scan(&u)
-		outRows[i].username = u
+	for i := range invited {
+		var username *string
+		if err := tx.QueryRow(r.Context(),
+			`SELECT username FROM profiles WHERE user_id = $1`,
+			invited[i].userID,
+		).Scan(&username); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+		invited[i].username = username
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
@@ -879,8 +940,8 @@ func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]dto.TripInviteItem, 0, len(outRows))
-	for _, row := range outRows {
+	items := make([]dto.TripInviteItem, 0, len(invited))
+	for _, row := range invited {
 		items = append(items, dto.TripInviteItem{
 			TripID:    tripID.String(),
 			UserID:    row.userID.String(),
@@ -889,115 +950,134 @@ func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 			InvitedAt: row.invitedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	utils.WriteJSONResponse(w, http.StatusOK, dto.TripInviteResponse{
+
+	resp := dto.TripInviteResponse{
 		Invitations:       items,
-		NotificationsSent: len(items),
-	})
+		NotificationsSent: len(invited),
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, resp)
 }
 
 // RespondInvitation handles POST /api/trips/{trip_id}/invitations/respond
-// @Summary      Respond to a trip invitation
-// @Description  FR3.2 เพื่อนตอบรับคำเชิญ หรือยกเลิก (accept|decline)
-// @Tags         trips
-// @Accept       json
-// @Produce      json
-// @Param        trip_id  path      string                             true  "Trip ID"
-// @Param        payload  body      dto.TripInvitationRespondRequest   true  "Respond payload"
-// @Success      200      {object}  dto.TripInvitationRespondResponse
-// @Failure      400      {object}  utils.ErrorResponse
-// @Failure      401      {object}  utils.ErrorResponse
-// @Failure      404      {object}  utils.ErrorResponse
-// @Failure      409      {object}  utils.ErrorResponse
-// @Failure      500      {object}  utils.ErrorResponse
-// @Router       /api/trips/{trip_id}/invitations/respond [post]
+// @Summary Respond to a trip invitation
+// @Tags trips
+// @Accept json
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Param payload body dto.TripInvitationRespondRequest true "Respond payload"
+// @Success 200 {object} dto.TripInvitationRespondResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 409 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/invitations/respond [post]
 func (h *TripsHandler) RespondInvitation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
-	// parse /api/trips/{trip_id}/invitations/respond
-	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
-	i := strings.Index(rest, "/")
-	if i <= 0 || !strings.HasSuffix(r.URL.Path, "/invitations/respond") {
+	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/invitations/respond
+	rest := strings.TrimPrefix(path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(path, "/invitations/respond") {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
 		return
 	}
-	tripID, err := uuid.Parse(rest[:i])
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
 		return
 	}
 
 	var req dto.TripInvitationRespondRequest
-	if err := decodeStrictJSON(r, &req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body or unknown fields")
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
 		return
 	}
-	action := strings.ToLower(strings.TrimSpace(req.Response))
-	if action != "accept" && action != "decline" {
+	resp := strings.ToLower(strings.TrimSpace(req.Response))
+	if resp != "accept" && resp != "decline" {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "response must be 'accept' or 'decline'")
 		return
 	}
 
-	// basic trip data
+	ctx := r.Context()
+	now := time.Now()
+
 	var tID uuid.UUID
 	var tName, tDest string
-	if err := h.db.QueryRow(r.Context(),
-		`SELECT id,name,destination FROM trips WHERE id=$1`, tripID,
+	if err := h.db.QueryRow(ctx,
+		`SELECT id, name, destination FROM trips WHERE id = $1`,
+		tripID,
 	).Scan(&tID, &tName, &tDest); err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
 		return
 	}
 
-	// invitation row
-	var role, status string
+	var curRole, curStatus string
 	var invitedAt, joinedAt *time.Time
-	if err := h.db.QueryRow(r.Context(),
-		`SELECT role,status,invited_at,joined_at FROM trip_members WHERE trip_id=$1 AND user_id=$2`,
+	err = h.db.QueryRow(ctx,
+		`SELECT role, status, invited_at, joined_at
+           FROM trip_members
+          WHERE trip_id = $1 AND user_id = $2`,
 		tripID, userID,
-	).Scan(&role, &status, &invitedAt, &joinedAt); err != nil {
+	).Scan(&curRole, &curStatus, &invitedAt, &joinedAt)
+	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Invitation not found")
 		return
 	}
-	if strings.ToLower(status) != "pending" {
-		switch strings.ToLower(status) {
-		case "accepted":
-			utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "already accepted")
-		case "declined":
-			utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "already declined")
-		default:
-			utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "cannot respond in current status")
-		}
+
+	switch strings.ToLower(curStatus) {
+	case "pending":
+		// ok
+	case "accepted":
+		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "already accepted")
+		return
+	case "declined":
+		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "already declined")
+		return
+	default:
+		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "cannot respond in current status")
 		return
 	}
 
-	now := time.Now()
-	if action == "accept" {
-		if _, err := h.db.Exec(r.Context(),
-			`UPDATE trip_members SET status='accepted', joined_at=$3 WHERE trip_id=$1 AND user_id=$2`,
+	if resp == "accept" {
+		_, err = h.db.Exec(ctx,
+			`UPDATE trip_members
+			    SET status = 'accepted',
+			        joined_at = $3
+			  WHERE trip_id = $1 AND user_id = $2`,
 			tripID, userID, now,
-		); err != nil {
+		)
+		if err != nil {
 			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 			return
 		}
 		joinedAt = &now
-		status = "accepted"
+		curStatus = "accepted"
 	} else {
-		if _, err := h.db.Exec(r.Context(),
-			`UPDATE trip_members SET status='declined' WHERE trip_id=$1 AND user_id=$2`,
+		_, err = h.db.Exec(ctx,
+			`UPDATE trip_members
+			    SET status = 'declined'
+			  WHERE trip_id = $1 AND user_id = $2`,
 			tripID, userID,
-		); err != nil {
+		)
+		if err != nil {
 			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 			return
 		}
 		joinedAt = nil
-		status = "declined"
+		curStatus = "declined"
 	}
 
 	var joinedAtStr *string
@@ -1005,8 +1085,11 @@ func (h *TripsHandler) RespondInvitation(w http.ResponseWriter, r *http.Request)
 		s := joinedAt.UTC().Format(time.RFC3339)
 		joinedAtStr = &s
 	}
-	utils.WriteJSONResponse(w, http.StatusOK, dto.TripInvitationRespondResponse{
-		Message: map[string]string{"accepted": "Invitation accepted successfully", "declined": "Invitation declined successfully"}[status],
+	out := dto.TripInvitationRespondResponse{
+		Message: map[string]string{
+			"accepted": "Invitation accepted successfully",
+			"declined": "Invitation declined successfully",
+		}[curStatus],
 		Trip: dto.TripInvitationRespondTrip{
 			ID:          tID.String(),
 			Name:        tName,
@@ -1014,68 +1097,71 @@ func (h *TripsHandler) RespondInvitation(w http.ResponseWriter, r *http.Request)
 		},
 		Member: dto.TripInvitationRespondMember{
 			UserID:   userID.String(),
-			Role:     role,
-			Status:   status,
+			Role:     curRole,
+			Status:   curStatus,
 			JoinedAt: joinedAtStr,
 		},
-	})
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, out)
 }
 
 // ListInvitations handles GET /api/trips/{trip_id}/invitations
-// @Summary      List invitations of a trip (creator only)
-// @Description  FR3.3 ดูรายการคำเชิญของทริป (creator เห็นสถิติด้วย)
-// @Tags         trips
-// @Produce      json
-// @Param        trip_id  path      string  true  "Trip ID"
-// @Success      200      {object}  dto.TripInvitationsListResponse
-// @Failure      400      {object}  utils.ErrorResponse
-// @Failure      401      {object}  utils.ErrorResponse
-// @Failure      403      {object}  utils.ErrorResponse
-// @Failure      404      {object}  utils.ErrorResponse
-// @Failure      500      {object}  utils.ErrorResponse
-// @Router       /api/trips/{trip_id}/invitations [get]
+// @Summary List invitations of a trip (creator only)
+// @Tags trips
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Success 200 {object} dto.TripInvitationsListResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/invitations [get]
 func (h *TripsHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
-	// parse /api/trips/{trip_id}/invitations
-	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
-	i := strings.Index(rest, "/")
-	if i <= 0 || !strings.HasSuffix(r.URL.Path, "/invitations") {
+	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/invitations
+	rest := strings.TrimPrefix(path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(path, "/invitations") {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
 		return
 	}
-	tripID, err := uuid.Parse(rest[:i])
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
 		return
 	}
 
-	// permission: creator/creator-role
+	ctx := r.Context()
+
 	var creatorID uuid.UUID
-	if err := h.db.QueryRow(r.Context(), `SELECT creator_id FROM trips WHERE id=$1`, tripID).Scan(&creatorID); err != nil {
+	if err := h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
 		return
 	}
 	if requesterID != creatorID {
-		var okCreator bool
-		if err := h.db.QueryRow(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id=$1 AND user_id=$2 AND LOWER(role)='creator')`,
+		var isCreatorMember bool
+		if err := h.db.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
 			tripID, requesterID,
-		).Scan(&okCreator); err != nil || !okCreator {
+		).Scan(&isCreatorMember); err != nil || !isCreatorMember {
 			utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only creator can view invitations")
 			return
 		}
 	}
 
-	rows, err := h.db.Query(r.Context(), `
+	rows, err := h.db.Query(ctx, `
 		SELECT
 			tm.user_id,
 			p.username,
@@ -1101,28 +1187,31 @@ func (h *TripsHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 		var (
 			uid                              uuid.UUID
 			username, displayName, avatarURL *string
-			status, invitedBy                string
+			status                           string
+			invitedByStr                     string
 			invitedAt                        *time.Time
 		)
-		if err := rows.Scan(&uid, &username, &displayName, &avatarURL, &status, &invitedBy, &invitedAt); err != nil {
+		if err := rows.Scan(&uid, &username, &displayName, &avatarURL, &status, &invitedByStr, &invitedAt); err != nil {
 			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 			return
 		}
+
 		var invitedAtStr *string
 		if invitedAt != nil {
 			s := invitedAt.UTC().Format(time.RFC3339)
 			invitedAtStr = &s
 		}
-		if invitedBy == "" {
-			invitedBy = creatorID.String()
+		if invitedByStr == "" {
+			invitedByStr = creatorID.String()
 		}
+
 		invites = append(invites, dto.TripInvitationListItem{
 			UserID:      uid.String(),
 			Username:    username,
 			DisplayName: displayName,
 			AvatarURL:   avatarURL,
 			Status:      status,
-			InvitedBy:   invitedBy,
+			InvitedBy:   invitedByStr,
 			InvitedAt:   invitedAtStr,
 		})
 	}
@@ -1132,7 +1221,7 @@ func (h *TripsHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pending, accepted, declined int
-	if err := h.db.QueryRow(r.Context(),
+	if err := h.db.QueryRow(ctx,
 		`SELECT 
 			COALESCE(SUM(CASE WHEN status='pending'  THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN status='accepted' THEN 1 ELSE 0 END),0),
@@ -1142,53 +1231,54 @@ func (h *TripsHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 		return
 	}
+	stats := dto.TripInvitationsStats{
+		Total:    pending + accepted + declined,
+		Pending:  pending,
+		Accepted: accepted,
+		Declined: declined,
+	}
 
 	utils.WriteJSONResponse(w, http.StatusOK, dto.TripInvitationsListResponse{
 		Invitations: invites,
-		Stats: dto.TripInvitationsStats{
-			Total:    pending + accepted + declined,
-			Pending:  pending,
-			Accepted: accepted,
-			Declined: declined,
-		},
+		Stats:       stats,
 	})
 }
 
 // CancelInvitation handles DELETE /api/trips/{trip_id}/invitations/{user_id}
-// @Summary      Cancel a pending invitation (creator only)
-// @Description  FR3.4 ยกเลิกคำเชิญ (ลบแถวที่ status='pending')
-// @Tags         trips
-// @Produce      json
-// @Param        trip_id  path      string  true  "Trip ID"
-// @Param        user_id  path      string  true  "User ID"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  utils.ErrorResponse
-// @Failure      401      {object}  utils.ErrorResponse
-// @Failure      403      {object}  utils.ErrorResponse
-// @Failure      404      {object}  utils.ErrorResponse
-// @Failure      409      {object}  utils.ErrorResponse
-// @Failure      500      {object}  utils.ErrorResponse
-// @Router       /api/trips/{trip_id}/invitations/{user_id} [delete]
+// @Summary Cancel a pending invitation (creator only)
+// @Tags trips
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Param user_id path string true "User ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 409 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/invitations/{user_id} [delete]
 func (h *TripsHandler) CancelInvitation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
-	// parse /api/trips/{trip_id}/invitations/{user_id}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
+	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/invitations/{user_id}
+	rest := strings.TrimPrefix(path, "/api/trips/")
 	slash := strings.Index(rest, "/")
 	if slash <= 0 {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing trip_id")
 		return
 	}
 	tripIDStr := rest[:slash]
-	rest2 := rest[slash+1:]
+	rest2 := rest[slash+1:] // invitations/{user_id}
 	if !strings.HasPrefix(rest2, "invitations/") {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing invitations segment")
 		return
@@ -1210,40 +1300,41 @@ func (h *TripsHandler) CancelInvitation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// permission
+	ctx := r.Context()
+
 	var creatorID uuid.UUID
-	if err := h.db.QueryRow(r.Context(), `SELECT creator_id FROM trips WHERE id=$1`, tripID).Scan(&creatorID); err != nil {
+	if err := h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
 		return
 	}
 	if requesterID != creatorID {
-		var okCreator bool
-		if err := h.db.QueryRow(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id=$1 AND user_id=$2 AND LOWER(role)='creator')`,
+		var isCreatorMember bool
+		if err := h.db.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
 			tripID, requesterID,
-		).Scan(&okCreator); err != nil || !okCreator {
+		).Scan(&isCreatorMember); err != nil || !isCreatorMember {
 			utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only creator can cancel invitations")
 			return
 		}
 	}
 
-	// must be pending
 	var status string
-	if err := h.db.QueryRow(r.Context(),
-		`SELECT status FROM trip_members WHERE trip_id=$1 AND user_id=$2`,
+	err = h.db.QueryRow(ctx,
+		`SELECT status FROM trip_members WHERE trip_id = $1 AND user_id = $2`,
 		tripID, targetUserID,
-	).Scan(&status); err != nil {
+	).Scan(&status)
+	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Invitation not found")
 		return
 	}
+
 	if strings.ToLower(status) != "pending" {
 		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "cannot cancel invitation in current status")
 		return
 	}
 
-	// delete row
-	cmd, err := h.db.Exec(r.Context(),
-		`DELETE FROM trip_members WHERE trip_id=$1 AND user_id=$2 AND status='pending'`,
+	cmd, err := h.db.Exec(ctx,
+		`DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND status = 'pending'`,
 		tripID, targetUserID,
 	)
 	if err != nil {
@@ -1254,76 +1345,82 @@ func (h *TripsHandler) CancelInvitation(w http.ResponseWriter, r *http.Request) 
 		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "invitation is no longer pending")
 		return
 	}
-	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "Invitation cancelled successfully"})
+
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
+		"message": "Invitation cancelled successfully",
+	})
 }
 
 // LeaveTrip handles POST /api/trips/{trip_id}/leave
-// @Summary      Leave a trip (for accepted members)
-// @Description  FR3.5 ออกจากทริป (ลบแถวสมาชิกที่ accepted)
-// @Tags         trips
-// @Produce      json
-// @Param        trip_id  path      string  true  "Trip ID"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  utils.ErrorResponse
-// @Failure      401      {object}  utils.ErrorResponse
-// @Failure      403      {object}  utils.ErrorResponse
-// @Failure      404      {object}  utils.ErrorResponse
-// @Failure      409      {object}  utils.ErrorResponse
-// @Failure      500      {object}  utils.ErrorResponse
-// @Router       /api/trips/{trip_id}/leave [post]
+// @Summary Leave a trip (for accepted members)
+// @Tags trips
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 409 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/leave [post]
 func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
-	// parse /api/trips/{trip_id}/leave
-	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
-	i := strings.Index(rest, "/")
-	if i <= 0 || !strings.HasSuffix(r.URL.Path, "/leave") {
+	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/leave
+	rest := strings.TrimPrefix(path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(path, "/leave") {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
 		return
 	}
-	tripID, err := uuid.Parse(rest[:i])
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
 		return
 	}
 
-	// ensure trip + creator
+	ctx := r.Context()
+
 	var creatorID uuid.UUID
-	if err := h.db.QueryRow(r.Context(), `SELECT creator_id FROM trips WHERE id=$1`, tripID).Scan(&creatorID); err != nil {
+	if err := h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
 		return
 	}
-	// creator cannot leave
+
 	if userID == creatorID {
 		utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Creator cannot leave their own trip")
 		return
 	}
 
-	// must be accepted member
 	var role, status string
-	if err := h.db.QueryRow(r.Context(),
-		`SELECT role,status FROM trip_members WHERE trip_id=$1 AND user_id=$2`,
+	err = h.db.QueryRow(ctx,
+		`SELECT role, status FROM trip_members WHERE trip_id = $1 AND user_id = $2`,
 		tripID, userID,
-	).Scan(&role, &status); err != nil {
+	).Scan(&role, &status)
+	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "You are not invited to this trip")
 		return
 	}
+
 	if strings.ToLower(status) != "accepted" {
 		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "You are not an active member of this trip")
 		return
 	}
 
-	// delete membership row
-	cmd, err := h.db.Exec(r.Context(),
-		`DELETE FROM trip_members WHERE trip_id=$1 AND user_id=$2 AND status='accepted'`,
+	cmd, err := h.db.Exec(ctx,
+		`DELETE FROM trip_members
+       WHERE trip_id = $1 AND user_id = $2 AND status = 'accepted'`,
 		tripID, userID,
 	)
 	if err != nil {
@@ -1334,44 +1431,47 @@ func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "You are not an active member of this trip")
 		return
 	}
-	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "You have left the trip successfully"})
+
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
+		"message": "You have left the trip successfully",
+	})
 }
 
 // RemoveMember handles DELETE /api/trips/{trip_id}/members/{user_id}
-// @Summary      Remove a member from a trip (creator only)
-// @Description  FR3.6 ลบสมาชิกออกจากทริป (ลบแถวสมาชิกที่มีอยู่ ไม่ตั้งสถานะ 'removed')
-// @Tags         trips
-// @Produce      json
-// @Param        trip_id  path      string  true  "Trip ID"
-// @Param        user_id  path      string  true  "User ID"
-// @Success      200      {object}  map[string]string
-// @Failure      400      {object}  utils.ErrorResponse
-// @Failure      401      {object}  utils.ErrorResponse
-// @Failure      403      {object}  utils.ErrorResponse
-// @Failure      404      {object}  utils.ErrorResponse
-// @Failure      409      {object}  utils.ErrorResponse
-// @Failure      500      {object}  utils.ErrorResponse
-// @Router       /api/trips/{trip_id}/members/{user_id} [delete]
+// @Summary Remove a member from a trip (creator only)
+// @Tags trips
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Param user_id path string true "User ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 409 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/members/{user_id} [delete]
 func (h *TripsHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
-	// parse /api/trips/{trip_id}/members/{user_id}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
+	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/members/{user_id}
+	rest := strings.TrimPrefix(path, "/api/trips/")
 	slash := strings.Index(rest, "/")
 	if slash <= 0 {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing trip_id")
 		return
 	}
 	tripIDStr := rest[:slash]
-	rest2 := rest[slash+1:]
+	rest2 := rest[slash+1:] // members/{user_id}
 	if !strings.HasPrefix(rest2, "members/") {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing members segment")
 		return
@@ -1389,42 +1489,48 @@ func (h *TripsHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ensure trip + permission
+	ctx := r.Context()
+
 	var creatorID uuid.UUID
-	if err := h.db.QueryRow(r.Context(), `SELECT creator_id FROM trips WHERE id=$1`, tripID).Scan(&creatorID); err != nil {
+	if err := h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
 		return
 	}
+
 	if requesterID != creatorID {
-		var okCreator bool
-		if err := h.db.QueryRow(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id=$1 AND user_id=$2 AND LOWER(role)='creator')`,
+		var isCreatorMember bool
+		if err := h.db.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
 			tripID, requesterID,
-		).Scan(&okCreator); err != nil || !okCreator {
+		).Scan(&isCreatorMember); err != nil || !isCreatorMember {
 			utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only creator can remove a member")
 			return
 		}
 	}
 
-	// cannot remove trip creator
 	if targetUserID == creatorID {
 		utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Cannot remove the trip creator")
 		return
 	}
 
-	// ensure the member exists in this trip
 	var role, status string
-	if err := h.db.QueryRow(r.Context(),
-		`SELECT role,status FROM trip_members WHERE trip_id=$1 AND user_id=$2`,
+	err = h.db.QueryRow(ctx,
+		`SELECT role, status FROM trip_members WHERE trip_id = $1 AND user_id = $2`,
 		tripID, targetUserID,
-	).Scan(&role, &status); err != nil {
+	).Scan(&role, &status)
+	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Member not found in this trip")
 		return
 	}
 
-	// delete membership row
-	cmd, err := h.db.Exec(r.Context(),
-		`DELETE FROM trip_members WHERE trip_id=$1 AND user_id=$2`,
+	if strings.ToLower(status) == "removed" {
+		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "Member already removed")
+		return
+	}
+
+	cmd, err := h.db.Exec(ctx,
+		`DELETE FROM trip_members
+       WHERE trip_id = $1 AND user_id = $2`,
 		tripID, targetUserID,
 	)
 	if err != nil {
@@ -1435,5 +1541,8 @@ func (h *TripsHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Member not found in this trip")
 		return
 	}
-	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "Member removed successfully"})
+
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
+		"message": "Member removed successfully",
+	})
 }
