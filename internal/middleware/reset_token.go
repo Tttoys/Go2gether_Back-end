@@ -62,10 +62,8 @@ func ValidateResetToken(tokenString string, cfg *config.JWTConfig) (*ResetTokenC
 			return nil, errors.New("invalid token type")
 		}
 
-		// Check if token has expired
-		if claims.ExpiresAt.Before(time.Now()) {
-			return nil, errors.New("token has expired")
-		}
+		// Note: token.Valid already checks expiration, so we don't need to check again
+		// The JWT library automatically validates ExpiresAt when parsing the token
 
 		return claims, nil
 	}

@@ -5,7 +5,6 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -57,9 +56,8 @@ func (h *ForgotPasswordHandler) ForgotPassword(w http.ResponseWriter, r *http.Re
 	}
 
 	var req dto.ForgotPasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Validate email
@@ -82,19 +80,21 @@ func (h *ForgotPasswordHandler) ForgotPassword(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Check if there's a recent unused code (within 3 minutes)
+	// Check if there's a recent unused code (cooldown period: 60 seconds)
 	var existingCode string
-	var expiresAt time.Time
+	var createdAt time.Time
 	err = h.db.QueryRow(context.Background(),
-		`SELECT code, expires_at FROM auth_verifications 
+		`SELECT code, created_at FROM auth_verifications 
 		 WHERE user_id = $1 AND used = false AND expires_at > NOW()
 		 ORDER BY created_at DESC LIMIT 1`,
-		userID).Scan(&existingCode, &expiresAt)
+		userID).Scan(&existingCode, &createdAt)
 
 	if err == nil {
-		// There's still a valid code, check if it's within cooldown period
-		timeRemaining := time.Until(expiresAt)
-		if timeRemaining > 0 {
+		// Check if code was created within cooldown period (60 seconds)
+		cooldownPeriod := 60 * time.Second
+		timeSinceCreation := time.Since(createdAt)
+		if timeSinceCreation < cooldownPeriod {
+			timeRemaining := cooldownPeriod - timeSinceCreation
 			utils.WriteErrorResponse(w, http.StatusTooManyRequests,
 				"Code already sent",
 				fmt.Sprintf("Please wait %d seconds before requesting a new code", int(timeRemaining.Seconds())))
@@ -110,7 +110,7 @@ func (h *ForgotPasswordHandler) ForgotPassword(w http.ResponseWriter, r *http.Re
 	}
 
 	// Store verification code in database (expires in 3 minutes)
-	expiresAt = time.Now().Add(3 * time.Minute)
+	expiresAt := time.Now().Add(3 * time.Minute)
 	_, err = h.db.Exec(context.Background(),
 		`INSERT INTO auth_verifications (user_id, email, code, purpose, expires_at, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -161,9 +161,8 @@ func (h *ForgotPasswordHandler) VerifyOTP(w http.ResponseWriter, r *http.Request
 	}
 
 	var req dto.VerifyOTPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Validate required fields
@@ -224,6 +223,14 @@ func (h *ForgotPasswordHandler) VerifyOTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Mark verification code as used (after successful verification)
+	_, err = h.db.Exec(context.Background(),
+		"UPDATE auth_verifications SET used = true WHERE id = $1", verificationID)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
 	// Generate reset token (valid for 10 minutes)
 	resetToken, err := middleware.GenerateResetToken(userID, req.Email, req.Code, &h.config.JWT)
 	if err != nil {
@@ -259,9 +266,8 @@ func (h *ForgotPasswordHandler) ResetPassword(w http.ResponseWriter, r *http.Req
 	}
 
 	var req dto.ResetPasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Validate required fields
@@ -380,9 +386,8 @@ func (h *ForgotPasswordHandler) GetOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.GetOTPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Validate email
@@ -431,9 +436,9 @@ func (h *ForgotPasswordHandler) GetOTP(w http.ResponseWriter, r *http.Request) {
 	response := dto.GetOTPResponse{
 		Email:     req.Email,
 		Code:      code,
-		ExpiresAt: expiresAt.Format(time.RFC3339),
+		ExpiresAt: utils.FormatTimestamp(expiresAt),
 		Used:      used,
-		CreatedAt: createdAt.Format(time.RFC3339),
+		CreatedAt: utils.FormatTimestamp(createdAt),
 	}
 
 	utils.WriteJSONResponse(w, http.StatusOK, response)

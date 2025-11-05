@@ -11,7 +11,6 @@ import (
 )
 
 // SetupRoutes configures all application routes
-// SetupRoutes configures all application routes
 func SetupRoutes(
 	authHandler *handlers.AuthHandler,
 	healthHandler *handlers.HealthHandler,
@@ -42,6 +41,7 @@ func SetupRoutes(
 	http.HandleFunc("/api/auth/get-otp", forgotPasswordHandler.GetOTP)
 
 	// Trip routes (GET list/POST create, and GET detail)
+	// Handle both /api/trips and /api/trips/{id} patterns
 	http.HandleFunc("/api/trips", middleware.AuthMiddleware(tripsHandler.Trips, &cfg.JWT))
 	http.HandleFunc("/api/trips/", middleware.AuthMiddleware(tripsHandler.Trips, &cfg.JWT))
 

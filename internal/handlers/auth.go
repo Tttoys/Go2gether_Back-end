@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -47,9 +46,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Validate required fields
@@ -109,8 +107,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	userResponse := dto.UserResponse{
 		ID:        user.ID.String(),
 		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
+		CreatedAt: utils.FormatTimestamp(user.CreatedAt),
+		UpdatedAt: utils.FormatTimestamp(user.UpdatedAt),
 	}
 
 	response := dto.AuthResponse{
@@ -140,9 +138,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dto.LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
+	if err := utils.DecodeJSONRequest(w, r, &req); err != nil {
+		return // Error already handled by DecodeJSONRequest
 	}
 
 	// Validate required fields
@@ -183,8 +180,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	userResponse := dto.UserResponse{
 		ID:        user.ID.String(),
 		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
+		CreatedAt: utils.FormatTimestamp(user.CreatedAt),
+		UpdatedAt: utils.FormatTimestamp(user.UpdatedAt),
 	}
 
 	response := dto.AuthResponse{
@@ -214,7 +211,7 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get user ID from context (set by AuthMiddleware)
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	userID, ok := utils.GetUserIDFromContext(r.Context())
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not authenticated")
 		return
@@ -235,8 +232,8 @@ func (h *AuthHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	userResponse := dto.UserResponse{
 		ID:        user.ID.String(),
 		Email:     user.Email,
-		CreatedAt: user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
+		CreatedAt: utils.FormatTimestamp(user.CreatedAt),
+		UpdatedAt: utils.FormatTimestamp(user.UpdatedAt),
 	}
 
 	utils.WriteJSONResponse(w, http.StatusOK, userResponse)

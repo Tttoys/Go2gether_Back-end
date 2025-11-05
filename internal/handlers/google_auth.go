@@ -64,6 +64,17 @@ func (h *GoogleAuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) 
 	// Generate state parameter for CSRF protection
 	state := uuid.New().String()
 
+	// Store state in httpOnly cookie for validation (valid for 10 minutes)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		HttpOnly: true,
+		Secure:   r.TLS != nil, // Only send over HTTPS if request is HTTPS
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   600, // 10 minutes
+		Path:     "/",
+	})
+
 	// Create the authorization URL
 	authURL := h.oauth2Config.AuthCodeURL(state, oauth2.AccessTypeOffline)
 
@@ -94,14 +105,35 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get authorization code from query parameters
+	// Get authorization code and state from query parameters
 	code := r.URL.Query().Get("code")
-	_ = r.URL.Query().Get("state") // We can add state validation later if needed
+	stateFromQuery := r.URL.Query().Get("state")
 
 	if code == "" {
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Missing authorization code", "Authorization code is required")
 		return
 	}
+
+	// Validate state parameter (CSRF protection)
+	cookieState, err := r.Cookie("oauth_state")
+	if err != nil || cookieState.Value == "" {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid state", "State validation failed: cookie not found")
+		return
+	}
+
+	if stateFromQuery != cookieState.Value {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid state", "State validation failed: state mismatch")
+		return
+	}
+
+	// Clear the state cookie after validation
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    "",
+		HttpOnly: true,
+		MaxAge:   -1,
+		Path:     "/",
+	})
 
 	// Exchange authorization code for token
 	token, err := h.oauth2Config.Exchange(context.Background(), code)
@@ -140,7 +172,10 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Redirect to frontend with token and user information
-	frontendURL := "http://localhost:8081/callback"
+	frontendURL := h.config.GoogleOAuth.FrontendURL
+	if frontendURL == "" {
+		frontendURL = "http://localhost:8081/callback" // Fallback default
+	}
 	redirectURL := fmt.Sprintf("%s?token=%s&user_id=%s&email=%s&display_name=%s&provider=%s&is_verified=%t",
 		frontendURL,
 		jwtToken,

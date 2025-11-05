@@ -9,7 +9,7 @@ type ProfileCreateRequest struct {
 	AvatarURL        *string `json:"avatar_url"`
 	Phone            *string `json:"phone"`
 	Bio              *string `json:"bio"`
-	BirthDate        *string `json:"birth_date"` // "YYYY-MM-DD" หรือ RFC3339
+	BirthDate        *string `json:"birth_date"` // ISO 8601 format: YYYY-MM-DD or RFC3339
 	FoodPreferences  *string `json:"food_preferences"`
 	ChronicDisease   *string `json:"chronic_disease"`
 	AllergicFood     *string `json:"allergic_food"`
@@ -37,15 +37,15 @@ type ProfileGetResponse struct {
 		AvatarURL        *string `json:"avatar_url"`
 		Phone            *string `json:"phone"`
 		Bio              *string `json:"bio"`
-		BirthDate        *string `json:"birth_date"` // จะส่งเป็น "YYYY-MM-DD"
+		BirthDate        *string `json:"birth_date"` // ISO 8601 Date format: YYYY-MM-DD
 		FoodPreferences  *string `json:"food_preferences"`
 		ChronicDisease   *string `json:"chronic_disease"`
 		AllergicFood     *string `json:"allergic_food"`
 		AllergicDrugs    *string `json:"allergic_drugs"`
 		EmergencyContact *string `json:"emergency_contact"`
 		Role             string  `json:"role"`
-		CreatedAt        string  `json:"created_at"` // RFC3339
-		UpdatedAt        string  `json:"updated_at"` // RFC3339 (ใช้ users.updated_at)
+		CreatedAt        string  `json:"created_at"` // ISO 8601 DateTime format: RFC3339
+		UpdatedAt        string  `json:"updated_at"` // ISO 8601 DateTime format: RFC3339 (ใช้ users.updated_at)
 	} `json:"user"`
 }
 
@@ -57,7 +57,7 @@ type ProfileUpdateRequest struct {
 	AvatarURL        *string `json:"avatar_url"`        // "" => NULL
 	Phone            *string `json:"phone"`             // "" => NULL
 	Bio              *string `json:"bio"`               // "" => NULL
-	BirthDate        *string `json:"birth_date"`        // "" => NULL, else "YYYY-MM-DD" or RFC3339
+	BirthDate        *string `json:"birth_date"`        // "" => NULL, else ISO 8601 format: YYYY-MM-DD or RFC3339
 	FoodPreferences  *string `json:"food_preferences"`  // "" => NULL
 	ChronicDisease   *string `json:"chronic_disease"`   // "" => NULL
 	AllergicFood     *string `json:"allergic_food"`     // "" => NULL

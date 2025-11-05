@@ -4,6 +4,7 @@
 package utils
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/smtp"
 
@@ -67,14 +68,119 @@ func (e *EmailService) sendEmail(to, subject, body string) error {
 			"%s\r\n",
 		e.config.FromName, fromEmail, to, subject, body))
 
-	// Send email
+	// Send email with TLS/SSL configuration
 	addr := e.config.SMTPHost + ":" + e.config.SMTPPort
-	err := smtp.SendMail(addr, auth, fromEmail, []string{to}, message)
+
+	// Use SSL/TLS based on configuration
+	if e.config.UseSSL {
+		// SSL connection (typically port 465)
+		return e.sendEmailSSL(addr, auth, fromEmail, to, message)
+	} else if e.config.UseTLS {
+		// STARTTLS (typically port 587)
+		return e.sendEmailTLS(addr, auth, fromEmail, to, message)
+	} else {
+		// Plain connection (not recommended for production)
+		err := smtp.SendMail(addr, auth, fromEmail, []string{to}, message)
+		if err != nil {
+			return fmt.Errorf("failed to send email: %v", err)
+		}
+		return nil
+	}
+}
+
+// sendEmailTLS sends email using STARTTLS
+func (e *EmailService) sendEmailTLS(addr string, auth smtp.Auth, fromEmail, to string, message []byte) error {
+	// Connect to SMTP server
+	client, err := smtp.Dial(addr)
 	if err != nil {
-		return fmt.Errorf("failed to send email: %v", err)
+		return fmt.Errorf("failed to connect to SMTP server: %v", err)
+	}
+	defer client.Close()
+
+	// Start TLS
+	tlsConfig := &tls.Config{
+		ServerName: e.config.SMTPHost,
+	}
+	if err := client.StartTLS(tlsConfig); err != nil {
+		return fmt.Errorf("failed to start TLS: %v", err)
 	}
 
-	return nil
+	// Authenticate
+	if err := client.Auth(auth); err != nil {
+		return fmt.Errorf("failed to authenticate: %v", err)
+	}
+
+	// Set sender and recipient
+	if err := client.Mail(fromEmail); err != nil {
+		return fmt.Errorf("failed to set sender: %v", err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return fmt.Errorf("failed to set recipient: %v", err)
+	}
+
+	// Send email body
+	writer, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("failed to open data connection: %v", err)
+	}
+	_, err = writer.Write(message)
+	if err != nil {
+		return fmt.Errorf("failed to write message: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close data connection: %v", err)
+	}
+
+	return client.Quit()
+}
+
+// sendEmailSSL sends email using SSL connection
+func (e *EmailService) sendEmailSSL(addr string, auth smtp.Auth, fromEmail, to string, message []byte) error {
+	// Connect to SMTP server with TLS
+	tlsConfig := &tls.Config{
+		ServerName: e.config.SMTPHost,
+	}
+	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	if err != nil {
+		return fmt.Errorf("failed to establish TLS connection: %v", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, e.config.SMTPHost)
+	if err != nil {
+		return fmt.Errorf("failed to create SMTP client: %v", err)
+	}
+	defer client.Close()
+
+	// Authenticate
+	if err := client.Auth(auth); err != nil {
+		return fmt.Errorf("failed to authenticate: %v", err)
+	}
+
+	// Set sender and recipient
+	if err := client.Mail(fromEmail); err != nil {
+		return fmt.Errorf("failed to set sender: %v", err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return fmt.Errorf("failed to set recipient: %v", err)
+	}
+
+	// Send email body
+	writer, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("failed to open data connection: %v", err)
+	}
+	_, err = writer.Write(message)
+	if err != nil {
+		return fmt.Errorf("failed to write message: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		return fmt.Errorf("failed to close data connection: %v", err)
+	}
+
+	return client.Quit()
 }
 
 // ===== Alternative: SendGrid Implementation =====

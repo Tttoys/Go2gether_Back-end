@@ -4,8 +4,8 @@ package dto
 type CreateTripRequest struct {
 	Name        string  `json:"name"`
 	Destination string  `json:"destination"`
-	StartDate   string  `json:"start_date"` // RFC3339 or YYYY-MM-DD
-	EndDate     string  `json:"end_date"`   // RFC3339 or YYYY-MM-DD
+	StartDate   string  `json:"start_date"` // ISO 8601 format: YYYY-MM-DD or RFC3339
+	EndDate     string  `json:"end_date"`   // ISO 8601 format: YYYY-MM-DD or RFC3339
 	Description string  `json:"description"`
 	Status      string  `json:"status"` // draft | published | cancelled
 	TotalBudget float64 `json:"total_budget"`

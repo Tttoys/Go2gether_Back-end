@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -80,6 +81,7 @@ type GoogleOAuthConfig struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
+	FrontendURL  string
 }
 
 // CORSConfig holds CORS configuration
@@ -141,6 +143,7 @@ func Load() (*Config, error) {
 			ClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 			ClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
 			RedirectURL:  getEnv("GOOGLE_REDIRECT_URL", "http://localhost:8080/api/auth/google/callback"),
+			FrontendURL:  getEnv("GOOGLE_FRONTEND_URL", "http://localhost:8081/callback"),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins:   getStringSliceEnv("CORS_ALLOWED_ORIGINS", []string{"*"}),
@@ -243,11 +246,11 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 func getStringSliceEnv(key string, defaultValue []string) []string {
 	if value := os.Getenv(key); value != "" {
 		// Simple comma-separated parsing
-		// For more complex parsing, consider using a proper CSV parser
 		parts := []string{}
-		for _, part := range []string{value} {
-			if part != "" {
-				parts = append(parts, part)
+		for _, part := range strings.Split(value, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				parts = append(parts, trimmed)
 			}
 		}
 		if len(parts) > 0 {
