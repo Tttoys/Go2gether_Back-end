@@ -143,7 +143,7 @@ func Load() (*Config, error) {
 			ClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 			ClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
 			RedirectURL:  getEnv("GOOGLE_REDIRECT_URL", "http://localhost:8080/api/auth/google/callback"),
-			FrontendURL:  getEnv("GOOGLE_FRONTEND_URL", "http://localhost:8081/callback"),
+			FrontendURL:  getEnv("GOOGLE_FRONTEND_URL", "http://192.168.1.120:8081/callback"),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins:   getStringSliceEnv("CORS_ALLOWED_ORIGINS", []string{"*"}),

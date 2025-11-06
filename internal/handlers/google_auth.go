@@ -174,7 +174,7 @@ func (h *GoogleAuthHandler) GoogleCallback(w http.ResponseWriter, r *http.Reques
 	// Redirect to frontend with token and user information
 	frontendURL := h.config.GoogleOAuth.FrontendURL
 	if frontendURL == "" {
-		frontendURL = "http://localhost:8081/callback" // Fallback default
+		frontendURL = "http://192.168.1.120:8081/callback" // Fallback default for Expo Go
 	}
 	redirectURL := fmt.Sprintf("%s?token=%s&user_id=%s&email=%s&display_name=%s&provider=%s&is_verified=%t",
 		frontendURL,
