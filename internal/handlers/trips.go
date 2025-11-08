@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
+	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +34,6 @@ func NewTripsHandler(db *pgxpool.Pool, cfg *config.Config) *TripsHandler {
 	return &TripsHandler{db: db, config: cfg}
 }
 
-// --- path helper ---
 func cleanPath(p string) string {
 	if p == "/" {
 		return p
@@ -45,6 +47,16 @@ func (h *TripsHandler) Trips(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPost:
+		// 2.2 POST /api/trips/{trip_id}/availability
+		if strings.HasPrefix(r.URL.Path, "/api/trips/") && strings.HasSuffix(r.URL.Path, "/availability") {
+			h.SaveAvailability(w, r)
+			return
+		}
+		// 2.4 POST /api/trips/{trip_id}/availability/generate-periods
+		if strings.HasPrefix(r.URL.Path, "/api/trips/") && strings.HasSuffix(r.URL.Path, "/availability/generate-periods") {
+			h.GenerateAvailablePeriods(w, r)
+			return
+		}
 		// FR3.5 POST /api/trips/{trip_id}/leave
 		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/leave") {
 			h.LeaveTrip(w, r)
@@ -69,6 +81,25 @@ func (h *TripsHandler) Trips(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case http.MethodGet:
+		p := r.URL.Path
+		// 2.1 GET /api/trips/{trip_id}/dates
+		if strings.HasPrefix(p, "/api/trips/") && strings.HasSuffix(p, "/dates") {
+			h.TripDates(w, r)
+			return
+		}
+
+		// 2.3 GET /api/trips/{trip_id}/availability/me
+		if strings.HasPrefix(r.URL.Path, "/api/trips/") && strings.HasSuffix(r.URL.Path, "/availability/me") {
+			h.GetMyAvailability(w, r)
+			return
+		}
+
+		// 2.5 GET /api/trips/{trip_id}/available-periods
+		if strings.HasPrefix(r.URL.Path, "/api/trips/") && strings.HasSuffix(r.URL.Path, "/available-periods") {
+			h.GetAvailablePeriods(w, r)
+			return
+		}
+
 		// FR3.3 GET /api/trips/{trip_id}/invitations
 		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/invitations") {
 			h.ListInvitations(w, r)
@@ -1545,4 +1576,839 @@ func (h *TripsHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
 		"message": "Member removed successfully",
 	})
+}
+
+// TripDates godoc
+// @Summary      Get trip's exact date range (for availability picking)
+// @Description  ส่งช่วงวันที่ตรงตาม start_date ถึง end_date ของทริป และจำนวนวันรวมแบบ inclusive
+// @Tags         trips
+// @Produce      json
+// @Security     BearerAuth
+// @Param        trip_id path string true "Trip ID"
+// @Success      200 {object} dto.TripDatesResponse
+// @Failure      400 {object} dto.ErrorResponse
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      403 {object} dto.ErrorResponse
+// @Failure      404 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /api/trips/{trip_id}/dates [get]
+func (h *TripsHandler) TripDates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// auth
+	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
+		return
+	}
+
+	// parse /api/trips/{trip_id}/dates
+	path := strings.TrimRight(r.URL.Path, "/")
+	rest := strings.TrimPrefix(path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(path, "/dates") {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
+		return
+	}
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
+		return
+	}
+
+	ctx := r.Context()
+
+	// load trip
+	var (
+		id        uuid.UUID
+		name      string
+		startDate time.Time
+		endDate   time.Time
+	)
+	err = h.db.QueryRow(ctx, `
+		SELECT id, name, start_date, end_date
+		  FROM trips
+		 WHERE id = $1
+		 LIMIT 1
+	`, tripID).Scan(&id, &name, &startDate, &endDate)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
+		return
+	}
+
+	// basic validation (กันข้อมูลเพี้ยน)
+	if endDate.Before(startDate) {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "trip end_date cannot be before start_date")
+		return
+	}
+
+	// permission: ต้องเป็น creator หรือมีแถวใน trip_members (สถานะใดก็ได้)
+	var allowed bool
+	if err := h.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM trips WHERE id = $1 AND creator_id = $2)
+		    OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2)
+	`, tripID, requesterID).Scan(&allowed); err != nil || !allowed {
+		utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only trip members can view date range")
+		return
+	}
+
+	// exact range = start_date .. end_date (inclusive)
+	start := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
+	end := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
+	total := int(end.Sub(start).Hours()/24) + 1
+
+	resp := dto.TripDatesResponse{
+		Trip: dto.TripDatesTrip{
+			ID:        id.String(),
+			Name:      name,
+			StartDate: start.Format("2006-01-02"),
+			EndDate:   end.Format("2006-01-02"),
+		},
+		DateRange: dto.TripDateRange{
+			StartDate:  start.Format("2006-01-02"),
+			EndDate:    end.Format("2006-01-02"),
+			TotalDates: total,
+		},
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, resp)
+}
+
+// SaveAvailability godoc
+// @Summary      Save my availability for a trip (one row per day per user)
+// @Description  บันทึกวันว่างของผู้ใช้ในทริป โดยรูปแบบ normalized: หนึ่งแถว/หนึ่งวัน/หนึ่งคน/หนึ่งทริป
+// @Tags         trips
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        trip_id path string true "Trip ID"
+// @Param        payload body dto.TripAvailabilityRequest true "Availability payload"
+// @Success      200 {object} dto.TripAvailabilityResponse
+// @Failure      400 {object} dto.ErrorResponse
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      403 {object} dto.ErrorResponse
+// @Failure      404 {object} dto.ErrorResponse
+// @Failure      409 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /api/trips/{trip_id}/availability [post]
+func (h *TripsHandler) SaveAvailability(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// auth
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
+		return
+	}
+
+	// parse: /api/trips/{trip_id}/availability
+	path := strings.TrimRight(r.URL.Path, "/")
+	rest := strings.TrimPrefix(path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(path, "/availability") {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
+		return
+	}
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
+		return
+	}
+
+	ctx := r.Context()
+
+	// โหลดช่วงวันของทริป
+	var (
+		tStart time.Time
+		tEnd   time.Time
+		tName  string
+	)
+	if err := h.db.QueryRow(ctx,
+		`SELECT start_date, end_date, name FROM trips WHERE id = $1`,
+		tripID,
+	).Scan(&tStart, &tEnd, &tName); err != nil {
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
+		return
+	}
+	if tEnd.Before(tStart) {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "trip end_date cannot be before start_date")
+		return
+	}
+
+	// สิทธิ์: ต้องเป็นสมาชิกทริป (สถานะใดก็ได้) หรือ creator
+	var allowed bool
+	if err := h.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM trips WHERE id = $1 AND creator_id = $2)
+		    OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2)
+	`, tripID, userID).Scan(&allowed); err != nil || !allowed {
+		utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only trip members can submit availability")
+		return
+	}
+
+	// decode body และดัก unknown fields
+	var req dto.TripAvailabilityRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	if len(req.Dates) == 0 {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "dates is required and must not be empty")
+		return
+	}
+
+	// เตรียม helper
+	start := dateOnlyUTC(tStart)
+	end := dateOnlyUTC(tEnd)
+	total := daysInclusive(start, end) // จำนวนวันที่เป็นไปได้ทั้งหมดในทริป
+
+	// แปลง/validate วันที่ที่ส่งมา
+	uniq := make(map[time.Time]struct{}, len(req.Dates))
+	validDates := make([]time.Time, 0, len(req.Dates))
+
+	for _, s := range req.Dates {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		// รองรับรูปแบบ YYYY-MM-DD เท่านั้น เพื่อความชัดเจน
+		d, err := time.ParseInLocation("2006-01-02", s, time.UTC)
+		if err != nil {
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "dates must be in YYYY-MM-DD format")
+			return
+		}
+		d = dateOnlyUTC(d)
+
+		// ต้องอยู่ในช่วงทริป
+		if d.Before(start) || d.After(end) {
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "date out of trip range: "+s)
+			return
+		}
+		// dedup
+		if _, seen := uniq[d]; seen {
+			continue
+		}
+		uniq[d] = struct{}{}
+		validDates = append(validDates, d)
+	}
+
+	// ถ้าไม่มีอะไรเหลือหลัง dedup
+	if len(validDates) == 0 {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "no valid dates to save")
+		return
+	}
+
+	// NOTE: ตาราง availabilities มีคอลัมน์ status เป็น USER-DEFINED NOT NULL
+	// สมมุติ enum มีค่า 'free'|'flexible'|'busy' (ปรับได้)
+	const availStatusFree = "free"
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// ลบข้อมูลเดิมของ user นี้ในทริปนี้ (เพื่อ idempotent)
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM availabilities
+		  WHERE trip_id = $1 AND user_id = $2`,
+		tripID, userID,
+	); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	// ใส่ใหม่แบบ bulk ผ่าน UNNEST
+	// เตรียม arrays
+	dateArr := make([]time.Time, 0, len(validDates))
+	statusArr := make([]string, 0, len(validDates))
+	for _, d := range validDates {
+		dateArr = append(dateArr, d)
+		statusArr = append(statusArr, availStatusFree)
+	}
+
+	// INSERT USING UNNEST
+	// หมายเหตุ: ถ้ามีข้อกำหนด unique (trip_id, user_id, date) ให้สร้าง unique index ไว้ใน DB
+	_, err = tx.Exec(ctx, `
+		INSERT INTO availabilities (trip_id, user_id, date, status)
+		SELECT $1, $2, d::date, s::availability_status
+		  FROM UNNEST($3::date[], $4::text[]) AS t(d, s)
+	`, tripID, userID, dateArr, statusArr)
+	if err != nil {
+		// ถ้า enum ชื่อไม่ใช่ availability_status ให้ปรับ type cast ให้ถูกกับ enum จริงใน DB
+		// เช่น s::text แล้วคอลัมน์บังคับ cast เอง (ถ้า enum ต่างชื่อ ให้เอา "::availability_status" ออก)
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	// อัปเดต trip_members.availability_submitted = true (ถ้ามีแถว)
+	_, _ = tx.Exec(ctx, `
+		UPDATE trip_members
+		   SET availability_submitted = TRUE
+		 WHERE trip_id = $1 AND user_id = $2
+	`, tripID, userID)
+
+	if err := tx.Commit(ctx); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	resp := dto.TripAvailabilityResponse{
+		Message: "Availability saved successfully",
+		Summary: dto.TripAvailabilitySummary{
+			TotalDates:     total,
+			SubmittedDates: len(validDates),
+		},
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, resp)
+}
+
+// GetMyAvailability godoc
+// @Summary      Get my availability dates for a trip
+// @Description  คืนรายการวันที่ผู้ใช้ (me) ทำเครื่องหมายว่าว่างในทริป พร้อมสรุปจำนวนวันทั้งหมดของทริป/จำนวนที่ส่งมา
+// @Tags         trips
+// @Produce      json
+// @Security     BearerAuth
+// @Param        trip_id path string true "Trip ID"
+// @Success      200 {object} dto.TripMyAvailabilityResponse
+// @Failure      400 {object} dto.ErrorResponse
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      403 {object} dto.ErrorResponse
+// @Failure      404 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /api/trips/{trip_id}/availability/me [get]
+func (h *TripsHandler) GetMyAvailability(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// auth
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
+		return
+	}
+
+	// parse: /api/trips/{trip_id}/availability/me
+	path := strings.TrimRight(r.URL.Path, "/")
+	rest := strings.TrimPrefix(path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(path, "/availability/me") {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
+		return
+	}
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
+		return
+	}
+
+	ctx := r.Context()
+
+	// โหลดช่วงวันของทริป (คำนวณ total_dates)
+	var tStart, tEnd time.Time
+	if err := h.db.QueryRow(ctx,
+		`SELECT start_date, end_date FROM trips WHERE id = $1`,
+		tripID,
+	).Scan(&tStart, &tEnd); err != nil {
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
+		return
+	}
+	if tEnd.Before(tStart) {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "trip end_date cannot be before start_date")
+		return
+	}
+	start := dateOnlyUTC(tStart)
+	end := dateOnlyUTC(tEnd)
+	totalDates := daysInclusive(start, end)
+
+	// Permission: ต้องเป็น creator หรือมีแถวใน trip_members (จะ pending/accepted ก็ให้ดูของตัวเองได้)
+	var allowed bool
+	if err := h.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM trips WHERE id = $1 AND creator_id = $2)
+		    OR EXISTS (SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2)
+	`, tripID, userID).Scan(&allowed); err != nil || !allowed {
+		utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only trip members can view availability")
+		return
+	}
+
+	// ดึงวันที่ที่ user ทำไว้
+	rows, err := h.db.Query(ctx, `
+		SELECT date
+		  FROM availabilities
+		 WHERE trip_id = $1 AND user_id = $2
+		 ORDER BY date ASC
+	`, tripID, userID)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	items := make([]dto.TripAvailabilityDateItem, 0, 32)
+	for rows.Next() {
+		var d time.Time
+		if err := rows.Scan(&d); err != nil {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+		items = append(items, dto.TripAvailabilityDateItem{
+			Date: dateOnlyUTC(d).Format("2006-01-02"),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	resp := dto.TripMyAvailabilityResponse{
+		Availability: items,
+		Summary: dto.TripAvailabilitySummary{
+			TotalDates:     totalDates,
+			SubmittedDates: len(items),
+		},
+	}
+	utils.WriteJSONResponse(w, http.StatusOK, resp)
+}
+
+// GenerateAvailablePeriods handles POST /api/trips/{trip_id}/availability/generate-periods
+// @Summary Generate continuous periods where members are available (and persist to available_periods)
+// @Description คำนวณช่วงวันที่สมาชิกว่างตามเกณฑ์ แล้วลบข้อมูลเดิมและบันทึกของใหม่ลงตาราง available_periods ทันที
+// @Tags availability
+// @Accept json
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Param payload body struct{ MinDays int `json:"min_days"`; MinAvailabilityMember int `json:"min_availability_member"` } true "Generate params"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/availability/generate-periods [post]
+func (h *TripsHandler) GenerateAvailablePeriods(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// auth
+	_, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
+		return
+	}
+
+	// parse: /api/trips/{trip_id}/availability/generate-periods
+	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(r.URL.Path, "/availability/generate-periods") {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
+		return
+	}
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
+		return
+	}
+
+	// decode payload
+	var in struct {
+		MinDays               int `json:"min_days"`
+		MinAvailabilityMember int `json:"min_availability_member"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
+		return
+	}
+	if in.MinDays <= 0 {
+		in.MinDays = 1
+	}
+	if in.MinAvailabilityMember <= 0 {
+		// หากไม่ส่งมา ให้ใช้ 1 เป็นขั้นต่ำ
+		in.MinAvailabilityMember = 1
+	}
+
+	ctx := r.Context()
+
+	// 1) โหลดช่วงทริป + นับจำนวนสมาชิกทั้งหมด (เอาเฉพาะสถานะ accepted เป็นสมาชิกจริง)
+	var (
+		tStart, tEnd time.Time
+		totalMembers int
+		tName        string
+	)
+	if err := h.db.QueryRow(ctx,
+		`SELECT start_date, end_date, name FROM trips WHERE id = $1`, tripID,
+	).Scan(&tStart, &tEnd, &tName); err != nil {
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
+		return
+	}
+	if !tEnd.After(tStart) && !tEnd.Equal(tStart) {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Bad Request", "trip date range is invalid")
+		return
+	}
+	if err := h.db.QueryRow(ctx,
+		`SELECT COALESCE(COUNT(1),0) FROM trip_members WHERE trip_id = $1 AND status = 'accepted'`,
+		tripID,
+	).Scan(&totalMembers); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	if totalMembers == 0 {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Bad Request", "no accepted members in this trip")
+		return
+	}
+
+	// 2) ดึง free_count รายวันในช่วงทริป (เรียงตามวันที่)
+	//    หมายเหตุ: สมมติ status = 'free' เป็นตัวบอกวันว่าง (ตามที่เราใช้ใน 2.2)
+	rows, err := h.db.Query(ctx, `
+		WITH d AS (
+			SELECT generate_series($1::date, $2::date, interval '1 day')::date AS d
+		),
+		f AS (
+			SELECT a.date AS d, COUNT(*)::int AS free_count
+			FROM availabilities a
+			JOIN trip_members tm ON tm.trip_id = a.trip_id AND tm.user_id = a.user_id AND tm.status = 'accepted'
+			WHERE a.trip_id = $3 AND a.status = 'free'
+			GROUP BY a.date
+		)
+		SELECT d.d, COALESCE(f.free_count, 0) AS free_count
+		FROM d
+		LEFT JOIN f ON f.d = d.d
+		ORDER BY d.d ASC
+	`, tStart, tEnd, tripID)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type dayCount struct {
+		Date      time.Time
+		FreeCount int
+	}
+	daily := make([]dayCount, 0, 128)
+	for rows.Next() {
+		var dt time.Time
+		var fc int
+		if err := rows.Scan(&dt, &fc); err != nil {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+		daily = append(daily, dayCount{Date: dt, FreeCount: fc})
+	}
+	if err := rows.Err(); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	// 3) คัดวันผ่านเกณฑ์: free_count >= MinAvailabilityMember
+	pass := make([]dayCount, 0, len(daily))
+	for _, d := range daily {
+		if d.FreeCount >= in.MinAvailabilityMember {
+			pass = append(pass, d)
+		}
+	}
+
+	// 4) จับกลุ่มวันติดกัน (gaps-and-islands)
+	type period struct {
+		Start    time.Time
+		End      time.Time
+		Duration int
+		MinFree  int
+		TotalM   int
+		Percent  float64
+	}
+	periods := make([]period, 0)
+	if len(pass) > 0 {
+		curStart := pass[0].Date
+		curEnd := pass[0].Date
+		minFree := pass[0].FreeCount
+
+		advance := func() {
+			dur := int(curEnd.Sub(curStart).Hours()/24) + 1
+			if dur >= in.MinDays {
+				p := period{
+					Start:    curStart,
+					End:      curEnd,
+					Duration: dur,
+					MinFree:  minFree,
+					TotalM:   totalMembers,
+					Percent:  (float64(minFree) / float64(totalMembers)) * 100.0,
+				}
+				periods = append(periods, p)
+			}
+		}
+
+		for i := 1; i < len(pass); i++ {
+			expected := curEnd.AddDate(0, 0, 1) // next day
+			if pass[i].Date.Equal(expected) {
+				curEnd = pass[i].Date
+				if pass[i].FreeCount < minFree {
+					minFree = pass[i].FreeCount
+				}
+			} else {
+				// ปิดช่วงเดิม
+				advance()
+				// เริ่มช่วงใหม่
+				curStart = pass[i].Date
+				curEnd = pass[i].Date
+				minFree = pass[i].FreeCount
+			}
+		}
+		// ปิดช่วงสุดท้าย
+		advance()
+	}
+
+	// 5) จัดอันดับช่วง (min free สูง -> duration ยาว -> start เร็ว)
+	sort.SliceStable(periods, func(i, j int) bool {
+		if periods[i].MinFree != periods[j].MinFree {
+			return periods[i].MinFree > periods[j].MinFree
+		}
+		if periods[i].Duration != periods[j].Duration {
+			return periods[i].Duration > periods[j].Duration
+		}
+		return periods[i].Start.Before(periods[j].Start)
+	})
+
+	// สถิติ: กี่วันทีทุกคนว่าง (free_count == totalMembers)
+	allMembersDays := 0
+	for _, d := range daily {
+		if d.FreeCount == totalMembers {
+			allMembersDays++
+		}
+	}
+
+	// 6) ลบของเก่า + insert ชุดใหม่ใน tx
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `DELETE FROM available_periods WHERE trip_id = $1`, tripID); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	now := time.Now()
+	for i, p := range periods {
+		periodNo := i + 1
+		// ไม่อ้างคอลัมน์ rank (เลี่ยง enum ปัญหา)
+		_, err := tx.Exec(ctx, `
+			INSERT INTO available_periods
+			  (id, trip_id, period_number, start_date, end_date, duration_days,
+			   free_count, flexible_count, total_members, availability_percentage, created_at)
+			VALUES (gen_random_uuid(), $1, $2, $3, $4, $5,
+			        $6, $7, $8, $9, $10)
+		`,
+			tripID, periodNo, p.Start, p.End, p.Duration,
+			p.MinFree, 0 /* flexible_count */, p.TotalM, p.Percent, now,
+		)
+		if err != nil {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	// 7) ตอบกลับ (periods + stats)
+	type outPeriod struct {
+		PeriodNumber           int     `json:"period_number"`
+		StartDate              string  `json:"start_date"`
+		EndDate                string  `json:"end_date"`
+		DurationDays           int     `json:"duration_days"`
+		TotalMembers           int     `json:"total_members"`
+		AvailabilityPercentage float64 `json:"availability_percentage"`
+	}
+	respPeriods := make([]outPeriod, 0, len(periods))
+	for i, p := range periods {
+		respPeriods = append(respPeriods, outPeriod{
+			PeriodNumber:           i + 1,
+			StartDate:              p.Start.Format("2006-01-02"),
+			EndDate:                p.End.Format("2006-01-02"),
+			DurationDays:           p.Duration,
+			TotalMembers:           p.TotalM,
+			AvailabilityPercentage: math.Round(p.Percent*100) / 100, // ปัดทศนิยม 2 ตำแหน่ง
+		})
+	}
+
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"message": "Periods generated successfully",
+		"periods": respPeriods,
+		"stats": map[string]interface{}{
+			"total_periods":              len(periods),
+			"all_members_available_days": allMembersDays,
+			"total_members":              totalMembers,
+			"trip":                       map[string]interface{}{"id": tripID.String(), "name": tName},
+			"min_days":                   in.MinDays,
+			"min_availability_member":    in.MinAvailabilityMember,
+		},
+	})
+}
+
+// 2.5 ดูช่วงเวลาที่ Generate แล้ว
+// @Summary Get generated available periods of a trip
+// @Description อ่านช่วงวันที่บันทึกไว้ในตาราง available_periods (กัน NULL ให้ปลอดภัย)
+// @Tags availability
+// @Produce json
+// @Param trip_id path string true "Trip ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/available-periods [get]
+func (h *TripsHandler) GetAvailablePeriods(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// auth (ถ้าต้องการให้เฉพาะสมาชิกดู ให้เปิดส่วนนี้)
+	if _, ok := r.Context().Value("user_id").(uuid.UUID); !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
+		return
+	}
+
+	// parse /api/trips/{trip_id}/available-periods
+	rest := strings.TrimPrefix(r.URL.Path, "/api/trips/")
+	slash := strings.Index(rest, "/")
+	if slash <= 0 || !strings.HasSuffix(r.URL.Path, "/available-periods") {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
+		return
+	}
+	tripIDStr := rest[:slash]
+	tripID, err := uuid.Parse(tripIDStr)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
+		return
+	}
+
+	ctx := r.Context()
+
+	// ตรวจว่าทริปมีจริง (ป้องกัน 404 สวย ๆ)
+	var exists bool
+	if err := h.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM trips WHERE id=$1)`, tripID).Scan(&exists); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	if !exists {
+		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
+		return
+	}
+
+	// อ่าน periods (กัน NULL ด้วย COALESCE และ/หรือ sql.Null*)
+	rows, err := h.db.Query(ctx, `
+		SELECT
+			id,
+			period_number,
+			start_date,
+			end_date,
+			COALESCE(duration_days, 0)              AS duration_days,
+			COALESCE(total_members, 0)              AS total_members,
+			availability_percentage,                -- อาจเป็น NULL ถ้าเคย insert เก่า
+			created_at
+		FROM available_periods
+		WHERE trip_id = $1
+		ORDER BY period_number ASC, start_date ASC
+	`, tripID)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type periodDTO struct {
+		ID                     string  `json:"id"`
+		PeriodNumber           int     `json:"period_number"`
+		StartDate              string  `json:"start_date"`
+		EndDate                string  `json:"end_date"`
+		DurationDays           int     `json:"duration_days"`
+		TotalMembers           int     `json:"total_members"`
+		AvailabilityPercentage float64 `json:"availability_percentage"`
+		CreatedAt              string  `json:"created_at"`
+	}
+
+	list := make([]periodDTO, 0, 16)
+
+	for rows.Next() {
+		var (
+			id           uuid.UUID
+			periodNo     int
+			startDate    time.Time
+			endDate      time.Time
+			durationDays int
+			totalMembers int
+			percNull     sql.NullFloat64
+			createdAt    time.Time
+		)
+		if err := rows.Scan(
+			&id,
+			&periodNo,
+			&startDate,
+			&endDate,
+			&durationDays,
+			&totalMembers,
+			&percNull,
+			&createdAt,
+		); err != nil {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+
+		perc := 0.0
+		if percNull.Valid {
+			perc = percNull.Float64
+		}
+
+		list = append(list, periodDTO{
+			ID:                     id.String(),
+			PeriodNumber:           periodNo,
+			StartDate:              startDate.Format("2006-01-02"),
+			EndDate:                endDate.Format("2006-01-02"),
+			DurationDays:           durationDays,
+			TotalMembers:           totalMembers,
+			AvailabilityPercentage: perc,
+			CreatedAt:              createdAt.UTC().Format(time.RFC3339),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"periods": list,
+	})
+}
+
+// ---------- helpers (ถ้ายังไม่มีในไฟล์นี้ ให้เพิ่ม) ----------
+
+func mathRound2(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+func dateOnlyUTC(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func daysInclusive(a, b time.Time) int {
+	return int(b.Sub(a).Hours()/24) + 1
 }
