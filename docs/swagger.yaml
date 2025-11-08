@@ -108,6 +108,13 @@ definitions:
       total:
         type: integer
     type: object
+  dto.ProfileCheckResponse:
+    properties:
+      exists:
+        type: boolean
+      message:
+        type: string
+    type: object
   dto.ProfileCreateRequest:
     properties:
       allergic_drugs:
@@ -948,6 +955,31 @@ paths:
       security:
       - BearerAuth: []
       summary: Update user profile
+      tags:
+      - profile
+  /api/profile/check:
+    get:
+      consumes:
+      - application/json
+      description: 6.4 ตรวจสอบว่า user มี profile หรือไม่ (ต้องมี Bearer JWT)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ProfileCheckResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Check if profile exists
       tags:
       - profile
   /api/trips:

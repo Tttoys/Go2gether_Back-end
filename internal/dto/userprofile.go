@@ -64,3 +64,9 @@ type ProfileUpdateRequest struct {
 	AllergicDrugs    *string `json:"allergic_drugs"`    // "" => NULL
 	EmergencyContact *string `json:"emergency_contact"` // "" => NULL
 }
+
+// ProfileCheckResponse สำหรับ GET /api/profile/check
+type ProfileCheckResponse struct {
+	Exists  bool   `json:"exists"`
+	Message string `json:"message"`
+}

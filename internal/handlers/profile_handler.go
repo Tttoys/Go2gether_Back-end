@@ -136,6 +136,55 @@ returning username;
 	utils.WriteJSONResponse(w, http.StatusOK, resp)
 }
 
+// Check godoc
+// @Summary      Check if profile exists
+// @Description  6.4 ตรวจสอบว่า user มี profile หรือไม่ (ต้องมี Bearer JWT)
+// @Tags         profile
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200      {object}  dto.ProfileCheckResponse
+// @Failure      401      {object}  dto.ErrorResponse
+// @Failure      500      {object}  dto.ErrorResponse
+// @Router       /api/profile/check [get]
+func (h *ProfileHandler) Check(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method Not Allowed", "only GET is allowed")
+		return
+	}
+
+	// 1) auth
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "missing user in context")
+		return
+	}
+
+	ctx := r.Context()
+
+	// 2) ตรวจสอบว่า profile มีอยู่หรือไม่
+	const q = `select 1 from public.profiles where user_id = $1 limit 1`
+	var one int
+	err := h.pool.QueryRow(ctx, q, userID).Scan(&one)
+
+	var resp dto.ProfileCheckResponse
+	if err == nil {
+		// มี profile
+		resp.Exists = true
+		resp.Message = "Profile exists"
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		// ไม่มี profile
+		resp.Exists = false
+		resp.Message = "Profile does not exist"
+	} else {
+		// database error
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	utils.WriteJSONResponse(w, http.StatusOK, resp)
+}
+
 // วางใน struct/ไฟล์เดิม (ข้างๆ Create)
 func (h *ProfileHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

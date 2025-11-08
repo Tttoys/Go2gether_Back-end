@@ -44,6 +44,46 @@ CREATE INDEX IF NOT EXISTS idx_auth_verifications_code ON auth_verifications(cod
 CREATE INDEX IF NOT EXISTS idx_auth_verifications_expires_at ON auth_verifications(expires_at);
 
 -- ---------------------------------------------------------------------------
+-- Profiles
+-- ---------------------------------------------------------------------------
+-- Create profiles table
+CREATE TABLE IF NOT EXISTS profiles (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    username VARCHAR(255) UNIQUE NOT NULL,
+    first_name VARCHAR(255),
+    last_name VARCHAR(255),
+    display_name VARCHAR(255),
+    avatar_url TEXT,
+    phone VARCHAR(50),
+    bio TEXT,
+    birth_date DATE,
+    food_preferences TEXT,
+    chronic_disease TEXT,
+    allergic_food TEXT,
+    allergic_drugs TEXT,
+    emergency_contact TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes for profiles
+CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username);
+CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id);
+
+-- Trigger to auto-update updated_at on profiles
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'update_profiles_updated_at'
+    ) THEN
+        CREATE TRIGGER update_profiles_updated_at
+            BEFORE UPDATE ON profiles
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Trips
 -- ---------------------------------------------------------------------------
 -- Create trips table (if not exists)

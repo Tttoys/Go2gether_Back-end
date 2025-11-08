@@ -48,7 +48,9 @@ func SetupRoutes(
 	// Profile routes
 	// 6.1 เพิ่มโปรไฟล์: POST /api/profile  (ต้องผ่าน AuthMiddleware เพื่อให้มี userID ใน context)
 	// 6.2 GET  /api/profile  (ดูโปรไฟล์ตัวเอง)
+	// 6.4 GET  /api/profile/check  (ตรวจสอบว่า user มี profile หรือไม่)
 	http.HandleFunc("/api/profile", middleware.AuthMiddleware(profileHandler.Handle, &cfg.JWT))
+	http.HandleFunc("/api/profile/check", middleware.AuthMiddleware(profileHandler.Check, &cfg.JWT))
 
 	// Swagger documentation (must be registered before root handler)
 	http.Handle("/swagger/", httpSwagger.Handler(
