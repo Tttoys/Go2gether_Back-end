@@ -58,11 +58,6 @@ func (h *TripsHandler) Trips(w http.ResponseWriter, r *http.Request) {
 			h.LeaveTrip(w, r)
 			return
 		}
-		// FR3.2 POST /api/trips/{trip_id}/invitations/respond
-		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/invitations/respond") {
-			h.RespondInvitation(w, r)
-			return
-		}
 		// FR3.1 POST /api/trips/{trip_id}/invitations
 		if strings.HasPrefix(path, "/api/trips/") && strings.HasSuffix(path, "/invitations") {
 			h.InviteMembers(w, r)
@@ -112,11 +107,6 @@ func (h *TripsHandler) Trips(w http.ResponseWriter, r *http.Request) {
 		// FR3.6 DELETE /api/trips/{trip_id}/members/{user_id}
 		if strings.HasPrefix(path, "/api/trips/") && strings.Contains(path, "/members/") {
 			h.RemoveMember(w, r)
-			return
-		}
-		// FR3.4 DELETE /api/trips/{trip_id}/invitations/{user_id}
-		if strings.HasPrefix(path, "/api/trips/") && strings.Contains(path, "/invitations/") {
-			h.CancelInvitation(w, r)
 			return
 		}
 		// FR1.5 DELETE /api/trips/{trip_id}
@@ -766,9 +756,11 @@ func (h *TripsHandler) DeleteTrip(w http.ResponseWriter, r *http.Request) {
 
 // InviteMembers handles POST /api/trips/{trip_id}/invitations
 // @Summary Generate invitation link for a trip
+// @Description Generate a shareable invitation link for a trip. No request body required.
 // @Tags trips
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param trip_id path string true "Trip ID"
 // @Success 200 {object} dto.TripInviteResponse
 // @Failure 400 {object} dto.ErrorResponse
@@ -994,153 +986,6 @@ func (h *TripsHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, resp)
 }
 
-// RespondInvitation handles POST /api/trips/{trip_id}/invitations/respond
-// @Summary Respond to a trip invitation
-// @Tags trips
-// @Accept json
-// @Produce json
-// @Param trip_id path string true "Trip ID"
-// @Param payload body dto.TripInvitationRespondRequest true "Respond payload"
-// @Success 200 {object} dto.TripInvitationRespondResponse
-// @Failure 400 {object} dto.ErrorResponse
-// @Failure 401 {object} dto.ErrorResponse
-// @Failure 404 {object} dto.ErrorResponse
-// @Failure 409 {object} dto.ErrorResponse
-// @Failure 500 {object} dto.ErrorResponse
-// @Router /api/trips/{trip_id}/invitations/respond [post]
-func (h *TripsHandler) RespondInvitation(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
-	if !ok {
-		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
-		return
-	}
-
-	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/invitations/respond
-	rest := strings.TrimPrefix(path, "/api/trips/")
-	slash := strings.Index(rest, "/")
-	if slash <= 0 || !strings.HasSuffix(path, "/invitations/respond") {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid trip_id")
-		return
-	}
-	tripIDStr := rest[:slash]
-	tripID, err := uuid.Parse(tripIDStr)
-	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
-		return
-	}
-
-	var req dto.TripInvitationRespondRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
-		return
-	}
-	resp := strings.ToLower(strings.TrimSpace(req.Response))
-	if resp != "accept" && resp != "decline" {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "response must be 'accept' or 'decline'")
-		return
-	}
-
-	ctx := r.Context()
-	now := time.Now()
-
-	var tID uuid.UUID
-	var tName, tDest string
-	if err := h.db.QueryRow(ctx,
-		`SELECT id, name, destination FROM trips WHERE id = $1`,
-		tripID,
-	).Scan(&tID, &tName, &tDest); err != nil {
-		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
-		return
-	}
-
-	var curRole, curStatus string
-	var invitedAt, joinedAt *time.Time
-	err = h.db.QueryRow(ctx,
-		`SELECT role, status, invited_at, joined_at
-           FROM trip_members
-          WHERE trip_id = $1 AND user_id = $2`,
-		tripID, userID,
-	).Scan(&curRole, &curStatus, &invitedAt, &joinedAt)
-	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Invitation not found")
-		return
-	}
-
-	switch strings.ToLower(curStatus) {
-	case "pending":
-		// ok
-	case "accepted":
-		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "already accepted")
-		return
-	case "declined":
-		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "already declined")
-		return
-	default:
-		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "cannot respond in current status")
-		return
-	}
-
-	if resp == "accept" {
-		_, err = h.db.Exec(ctx,
-			`UPDATE trip_members
-			    SET status = 'accepted',
-			        joined_at = $3
-			  WHERE trip_id = $1 AND user_id = $2`,
-			tripID, userID, now,
-		)
-		if err != nil {
-			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
-			return
-		}
-		joinedAt = &now
-		curStatus = "accepted"
-	} else {
-		_, err = h.db.Exec(ctx,
-			`UPDATE trip_members
-			    SET status = 'declined'
-			  WHERE trip_id = $1 AND user_id = $2`,
-			tripID, userID,
-		)
-		if err != nil {
-			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
-			return
-		}
-		joinedAt = nil
-		curStatus = "declined"
-	}
-
-	var joinedAtStr *string
-	if joinedAt != nil {
-		s := joinedAt.UTC().Format(time.RFC3339)
-		joinedAtStr = &s
-	}
-	out := dto.TripInvitationRespondResponse{
-		Message: map[string]string{
-			"accepted": "Invitation accepted successfully",
-			"declined": "Invitation declined successfully",
-		}[curStatus],
-		Trip: dto.TripInvitationRespondTrip{
-			ID:          tID.String(),
-			Name:        tName,
-			Destination: tDest,
-		},
-		Member: dto.TripInvitationRespondMember{
-			UserID:   userID.String(),
-			Role:     curRole,
-			Status:   curStatus,
-			JoinedAt: joinedAtStr,
-		},
-	}
-	utils.WriteJSONResponse(w, http.StatusOK, out)
-}
-
 // ListInvitations handles GET /api/trips/{trip_id}/invitations
 // @Summary List invitations of a trip (creator only)
 // @Tags trips
@@ -1277,113 +1122,6 @@ func (h *TripsHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, dto.TripInvitationsListResponse{
 		Invitations: invites,
 		Stats:       stats,
-	})
-}
-
-// CancelInvitation handles DELETE /api/trips/{trip_id}/invitations/{user_id}
-// @Summary Cancel a pending invitation (creator only)
-// @Tags trips
-// @Produce json
-// @Param trip_id path string true "Trip ID"
-// @Param user_id path string true "User ID"
-// @Success 200 {object} map[string]string
-// @Failure 400 {object} dto.ErrorResponse
-// @Failure 401 {object} dto.ErrorResponse
-// @Failure 403 {object} dto.ErrorResponse
-// @Failure 404 {object} dto.ErrorResponse
-// @Failure 409 {object} dto.ErrorResponse
-// @Failure 500 {object} dto.ErrorResponse
-// @Router /api/trips/{trip_id}/invitations/{user_id} [delete]
-func (h *TripsHandler) CancelInvitation(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	requesterID, ok := r.Context().Value("user_id").(uuid.UUID)
-	if !ok {
-		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
-		return
-	}
-
-	path := cleanPath(r.URL.Path) // /api/trips/{trip_id}/invitations/{user_id}
-	rest := strings.TrimPrefix(path, "/api/trips/")
-	slash := strings.Index(rest, "/")
-	if slash <= 0 {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing trip_id")
-		return
-	}
-	tripIDStr := rest[:slash]
-	rest2 := rest[slash+1:] // invitations/{user_id}
-	if !strings.HasPrefix(rest2, "invitations/") {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing invitations segment")
-		return
-	}
-	userIDStr := strings.TrimPrefix(rest2, "invitations/")
-
-	tripID, err := uuid.Parse(tripIDStr)
-	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
-		return
-	}
-	targetUserID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid user id", "user_id must be UUID")
-		return
-	}
-	if targetUserID == requesterID {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Bad Request", "cannot cancel your own invitation")
-		return
-	}
-
-	ctx := r.Context()
-
-	var creatorID uuid.UUID
-	if err := h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err != nil {
-		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
-		return
-	}
-	if requesterID != creatorID {
-		var isCreatorMember bool
-		if err := h.db.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
-			tripID, requesterID,
-		).Scan(&isCreatorMember); err != nil || !isCreatorMember {
-			utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only creator can cancel invitations")
-			return
-		}
-	}
-
-	var status string
-	err = h.db.QueryRow(ctx,
-		`SELECT status FROM trip_members WHERE trip_id = $1 AND user_id = $2`,
-		tripID, targetUserID,
-	).Scan(&status)
-	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Invitation not found")
-		return
-	}
-
-	if strings.ToLower(status) != "pending" {
-		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "cannot cancel invitation in current status")
-		return
-	}
-
-	cmd, err := h.db.Exec(ctx,
-		`DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND status = 'pending'`,
-		tripID, targetUserID,
-	)
-	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
-		return
-	}
-	if cmd.RowsAffected() == 0 {
-		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "invitation is no longer pending")
-		return
-	}
-
-	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
-		"message": "Invitation cancelled successfully",
 	})
 }
 

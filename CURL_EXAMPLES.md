@@ -193,32 +193,15 @@ curl -X POST http://localhost:8080/api/trips/join \
 
 ---
 
-## Invitations (แบบเดิม - ยังใช้ได้)
+## Invitations
 
-### 13. ตอบรับ/ปฏิเสธคำเชิญ (Respond to Invitation)
-```bash
-curl -X POST "http://localhost:8080/api/trips/$TRIP_ID/invitations/respond" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "response": "accept"
-  }'
-```
-
-### 14. ดูรายการคำเชิญ (List Invitations) - เฉพาะ creator
+### 13. ดูรายการคำเชิญ (List Invitations) - เฉพาะ creator
 ```bash
 curl -X GET "http://localhost:8080/api/trips/$TRIP_ID/invitations" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### 15. ยกเลิกคำเชิญ (Cancel Invitation)
-```bash
-export USER_ID_TO_CANCEL="<user_id>"
-curl -X DELETE "http://localhost:8080/api/trips/$TRIP_ID/invitations/$USER_ID_TO_CANCEL" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### 16. ออกจากทริป (Leave Trip)
+### 14. ออกจากทริป (Leave Trip)
 ```bash
 curl -X POST "http://localhost:8080/api/trips/$TRIP_ID/leave" \
   -H "Authorization: Bearer $TOKEN"

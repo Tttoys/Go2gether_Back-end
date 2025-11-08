@@ -217,21 +217,6 @@
         }
       }
     },
-    "respond": {
-      "method": "POST",
-      "url": "{{base_url}}/api/trips/{{trip_id}}/invitations/respond",
-      "headers": {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer {{token}}"
-      },
-      "body": {
-        "response": "accept"
-      },
-      "description": "ตอบรับ/ปฏิเสธคำเชิญ",
-      "response_values": {
-        "response": "accept|decline"
-      }
-    },
     "list": {
       "method": "GET",
       "url": "{{base_url}}/api/trips/{{trip_id}}/invitations",
@@ -239,14 +224,6 @@
         "Authorization": "Bearer {{token}}"
       },
       "description": "ดูรายการคำเชิญ (เฉพาะ creator)"
-    },
-    "cancel": {
-      "method": "DELETE",
-      "url": "{{base_url}}/api/trips/{{trip_id}}/invitations/{{user_id}}",
-      "headers": {
-        "Authorization": "Bearer {{token}}"
-      },
-      "description": "ยกเลิกคำเชิญ (เฉพาะ creator)"
     }
   },
   "trip_members": {

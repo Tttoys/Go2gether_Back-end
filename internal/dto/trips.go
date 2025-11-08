@@ -131,9 +131,8 @@ type TripDetailResponse struct {
 // ====== FR3: Invitations & Membership ======
 
 // 3.1 Invite members (via link)
-type TripInviteRequest struct {
-	// Empty - no longer accepts user_ids
-}
+// TripInviteRequest is empty - no request body needed
+type TripInviteRequest struct{}
 type TripInviteResponse struct {
 	InvitationLink string `json:"invitation_link"`
 	ExpiresAt      string `json:"expires_at"` // RFC3339
@@ -157,27 +156,6 @@ type TripJoinViaLinkResponse struct {
 		Status   string `json:"status"`
 		JoinedAt string `json:"joined_at"`
 	} `json:"member"`
-}
-
-// 3.2 Respond invitation
-type TripInvitationRespondRequest struct {
-	Response string `json:"response"` // accept | decline
-}
-type TripInvitationRespondTrip struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Destination string `json:"destination"`
-}
-type TripInvitationRespondMember struct {
-	UserID   string  `json:"user_id"`
-	Role     string  `json:"role"`
-	Status   string  `json:"status"`    // accepted | declined
-	JoinedAt *string `json:"joined_at"` // nil when decline
-}
-type TripInvitationRespondResponse struct {
-	Message string                      `json:"message"`
-	Trip    TripInvitationRespondTrip   `json:"trip"`
-	Member  TripInvitationRespondMember `json:"member"`
 }
 
 // 3.3 List invitations
