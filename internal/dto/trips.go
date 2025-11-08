@@ -104,14 +104,14 @@ type TripStats struct {
 	MembersWithAvailability int `json:"members_with_availability"`
 }
 
-// TripDetailTrip encapsulates extra fields (start_month, end_month, etc.)
+// TripDetailTrip encapsulates extra fields (start_date, end_date, etc.)
 type TripDetailTrip struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
 	Destination string  `json:"destination"`
 	Description string  `json:"description"`
-	StartMonth  string  `json:"start_month"`
-	EndMonth    string  `json:"end_month"`
+	StartDate   string  `json:"start_date"`
+	EndDate     string  `json:"end_date"`
 	TotalBudget float64 `json:"total_budget"`
 	Currency    string  `json:"currency"`
 	Status      string  `json:"status"`
