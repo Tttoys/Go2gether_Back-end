@@ -1,0 +1,437 @@
+{
+  "base_url": "http://localhost:8080",
+  "authentication": {
+    "register": {
+      "method": "POST",
+      "url": "{{base_url}}/api/auth/register",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "email": "user@example.com",
+        "password": "password123"
+      },
+      "description": "สมัครสมาชิก"
+    },
+    "login": {
+      "method": "POST",
+      "url": "{{base_url}}/api/auth/login",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "email": "user@example.com",
+        "password": "password123"
+      },
+      "description": "เข้าสู่ระบบ",
+      "response_example": {
+        "user": {
+          "id": "uuid",
+          "email": "user@example.com",
+          "created_at": "2025-10-27T10:00:00Z",
+          "updated_at": "2025-10-27T10:00:00Z"
+        },
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      }
+    },
+    "get_profile": {
+      "method": "GET",
+      "url": "{{base_url}}/api/auth/profile",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ดูข้อมูลผู้ใช้"
+    }
+  },
+  "profile": {
+    "create": {
+      "method": "POST",
+      "url": "{{base_url}}/api/profile",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{token}}"
+      },
+      "body": {
+        "username": "johndoe",
+        "first_name": "John",
+        "last_name": "Doe",
+        "display_name": "Johnny",
+        "avatar_url": "https://example.com/avatar.jpg",
+        "phone": "+66123456789",
+        "bio": "Travel enthusiast",
+        "birth_date": "1990-01-01",
+        "food_preferences": "Vegetarian",
+        "chronic_disease": "None",
+        "allergic_food": "Peanuts",
+        "allergic_drugs": "Penicillin",
+        "emergency_contact": "+66987654321"
+      },
+      "description": "สร้างโปรไฟล์"
+    },
+    "get": {
+      "method": "GET",
+      "url": "{{base_url}}/api/profile",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ดูโปรไฟล์ตัวเอง"
+    },
+    "update": {
+      "method": "PUT",
+      "url": "{{base_url}}/api/profile",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{token}}"
+      },
+      "body": {
+        "display_name": "Johnny Updated",
+        "bio": "Updated bio",
+        "phone": "+66987654321"
+      },
+      "description": "อัปเดตโปรไฟล์"
+    }
+  },
+  "trips": {
+    "create": {
+      "method": "POST",
+      "url": "{{base_url}}/api/trips",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{token}}"
+      },
+      "body": {
+        "name": "Trip to Japan",
+        "destination": "Tokyo, Japan",
+        "start_date": "2025-12-01",
+        "end_date": "2025-12-10",
+        "description": "Amazing trip to Japan",
+        "status": "published",
+        "total_budget": 50000,
+        "currency": "THB"
+      },
+      "description": "สร้างทริป",
+      "response_example": {
+        "trip": {
+          "id": "uuid",
+          "name": "Trip to Japan",
+          "destination": "Tokyo, Japan",
+          "start_date": "2025-12-01",
+          "end_date": "2025-12-10",
+          "description": "Amazing trip to Japan",
+          "status": "published",
+          "total_budget": 50000,
+          "currency": "THB",
+          "creator_id": "uuid",
+          "created_at": "2025-10-27T10:00:00Z",
+          "updated_at": "2025-10-27T10:00:00Z"
+        }
+      }
+    },
+    "list": {
+      "method": "GET",
+      "url": "{{base_url}}/api/trips?status=published&limit=10&offset=0",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ดูรายการทริป",
+      "query_params": {
+        "status": "draft|published|cancelled|all",
+        "limit": "จำนวนรายการต่อหน้า (default: 20, max: 100)",
+        "offset": "จำนวนรายการที่ข้าม (default: 0)"
+      }
+    },
+    "get_detail": {
+      "method": "GET",
+      "url": "{{base_url}}/api/trips/{{trip_id}}",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ดูรายละเอียดทริป"
+    },
+    "update": {
+      "method": "PUT",
+      "url": "{{base_url}}/api/trips/{{trip_id}}",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{token}}"
+      },
+      "body": {
+        "name": "Updated Trip to Japan",
+        "destination": "Osaka, Japan",
+        "description": "Updated description",
+        "start_month": "2025-12",
+        "end_month": "2025-12",
+        "total_budget": 60000,
+        "status": "published"
+      },
+      "description": "อัปเดตทริป"
+    },
+    "delete": {
+      "method": "DELETE",
+      "url": "{{base_url}}/api/trips/{{trip_id}}",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ลบทริป"
+    }
+  },
+  "invitations": {
+    "generate_link": {
+      "method": "POST",
+      "url": "{{base_url}}/api/trips/{{trip_id}}/invitations",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{token}}"
+      },
+      "body": {},
+      "description": "สร้างลิงก์เชิญ",
+      "response_example": {
+        "invitation_link": "http://localhost:8081/trips/{trip_id}/join?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "expires_at": "2025-11-26T10:00:00Z",
+        "message": "Invitation link generated successfully. Share this link to invite members to your trip."
+      }
+    },
+    "join_via_link": {
+      "method": "POST",
+      "url": "{{base_url}}/api/trips/join",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{token}}"
+      },
+      "body": {
+        "invitation_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      },
+      "description": "เข้าร่วมทริปผ่านลิงก์เชิญ",
+      "response_example": {
+        "message": "Successfully joined the trip",
+        "trip": {
+          "id": "uuid",
+          "name": "Trip to Japan",
+          "destination": "Tokyo, Japan"
+        },
+        "member": {
+          "user_id": "uuid",
+          "role": "member",
+          "status": "accepted",
+          "joined_at": "2025-10-27T10:00:00Z"
+        }
+      }
+    },
+    "respond": {
+      "method": "POST",
+      "url": "{{base_url}}/api/trips/{{trip_id}}/invitations/respond",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {{token}}"
+      },
+      "body": {
+        "response": "accept"
+      },
+      "description": "ตอบรับ/ปฏิเสธคำเชิญ",
+      "response_values": {
+        "response": "accept|decline"
+      }
+    },
+    "list": {
+      "method": "GET",
+      "url": "{{base_url}}/api/trips/{{trip_id}}/invitations",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ดูรายการคำเชิญ (เฉพาะ creator)"
+    },
+    "cancel": {
+      "method": "DELETE",
+      "url": "{{base_url}}/api/trips/{{trip_id}}/invitations/{{user_id}}",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ยกเลิกคำเชิญ (เฉพาะ creator)"
+    }
+  },
+  "trip_members": {
+    "leave": {
+      "method": "POST",
+      "url": "{{base_url}}/api/trips/{{trip_id}}/leave",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ออกจากทริป"
+    },
+    "remove": {
+      "method": "DELETE",
+      "url": "{{base_url}}/api/trips/{{trip_id}}/members/{{user_id}}",
+      "headers": {
+        "Authorization": "Bearer {{token}}"
+      },
+      "description": "ลบสมาชิก (เฉพาะ creator)"
+    }
+  },
+  "password_reset": {
+    "forgot_password": {
+      "method": "POST",
+      "url": "{{base_url}}/api/auth/forgot-password",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "email": "user@example.com"
+      },
+      "description": "ขอรีเซ็ตรหัสผ่าน",
+      "response_example": {
+        "message": "Verification code has been sent to your email",
+        "email": "user@example.com",
+        "expires_in": "3 minutes"
+      }
+    },
+    "verify_otp": {
+      "method": "POST",
+      "url": "{{base_url}}/api/auth/verify-otp",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "email": "user@example.com",
+        "code": "123456"
+      },
+      "description": "ตรวจสอบ OTP",
+      "response_example": {
+        "message": "OTP verified successfully",
+        "reset_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "expires_in": "10 minutes"
+      }
+    },
+    "reset_password": {
+      "method": "POST",
+      "url": "{{base_url}}/api/auth/reset-password",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "reset_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+        "new_password": "newPassword123"
+      },
+      "description": "รีเซ็ตรหัสผ่าน",
+      "response_example": {
+        "message": "Password has been reset successfully"
+      }
+    },
+    "get_otp": {
+      "method": "POST",
+      "url": "{{base_url}}/api/auth/get-otp",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "email": "user@example.com"
+      },
+      "description": "ดู OTP (สำหรับ development/testing)",
+      "response_example": {
+        "email": "user@example.com",
+        "code": "123456",
+        "expires_at": "2025-10-27T10:03:00Z",
+        "used": false,
+        "created_at": "2025-10-27T10:00:00Z"
+      }
+    }
+  },
+  "health_checks": {
+    "health": {
+      "method": "GET",
+      "url": "{{base_url}}/healthz",
+      "description": "Basic health check",
+      "response_example": {
+        "status": "ok"
+      }
+    },
+    "liveness": {
+      "method": "GET",
+      "url": "{{base_url}}/livez",
+      "description": "Process liveness check",
+      "response_example": {
+        "status": "alive"
+      }
+    },
+    "readiness": {
+      "method": "GET",
+      "url": "{{base_url}}/readyz",
+      "description": "Readiness check (includes database connectivity)",
+      "response_example": {
+        "status": "ready",
+        "details": {
+          "db": "ok"
+        }
+      }
+    }
+  },
+  "example_flows": {
+    "full_flow_creator": {
+      "description": "Flow สำหรับ creator (สร้างทริปและลิงก์เชิญ)",
+      "steps": [
+        {
+          "step": 1,
+          "action": "register",
+          "endpoint": "authentication.register",
+          "note": "บันทึก token จาก response"
+        },
+        {
+          "step": 2,
+          "action": "create_profile",
+          "endpoint": "profile.create",
+          "note": "ใช้ token จากขั้นตอนที่ 1"
+        },
+        {
+          "step": 3,
+          "action": "create_trip",
+          "endpoint": "trips.create",
+          "note": "บันทึก trip_id จาก response"
+        },
+        {
+          "step": 4,
+          "action": "generate_invitation_link",
+          "endpoint": "invitations.generate_link",
+          "note": "บันทึก invitation_token จาก invitation_link"
+        }
+      ]
+    },
+    "full_flow_member": {
+      "description": "Flow สำหรับ member (เข้าร่วมทริปผ่านลิงก์)",
+      "steps": [
+        {
+          "step": 1,
+          "action": "register",
+          "endpoint": "authentication.register",
+          "note": "บันทึก token จาก response"
+        },
+        {
+          "step": 2,
+          "action": "create_profile",
+          "endpoint": "profile.create",
+          "note": "ใช้ token จากขั้นตอนที่ 1"
+        },
+        {
+          "step": 3,
+          "action": "join_via_link",
+          "endpoint": "invitations.join_via_link",
+          "note": "ใช้ invitation_token จากลิงก์เชิญ"
+        }
+      ]
+    }
+  },
+  "variables": {
+    "base_url": "http://localhost:8080",
+    "frontend_url": "http://localhost:8081",
+    "token": "JWT token จาก login",
+    "trip_id": "UUID ของทริป",
+    "user_id": "UUID ของผู้ใช้",
+    "invitation_token": "Token จากลิงก์เชิญ"
+  },
+  "notes": {
+    "authentication": "ทุก endpoint ที่ต้อง authentication จะต้องมี Authorization: Bearer <token> ใน header",
+    "frontend_url": "ตั้งค่า environment variable FRONTEND_URL สำหรับลิงก์เชิญ (default: http://localhost:8081)",
+    "invitation_token_expiry": "Invitation token หมดอายุใน 30 วัน",
+    "otp_expiry": "OTP หมดอายุใน 3 นาที",
+    "reset_token_expiry": "Reset token หมดอายุใน 10 นาที"
+  }
+}
+

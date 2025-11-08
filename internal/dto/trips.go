@@ -130,20 +130,33 @@ type TripDetailResponse struct {
 
 // ====== FR3: Invitations & Membership ======
 
-// 3.1 Invite members
+// 3.1 Invite members (via link)
 type TripInviteRequest struct {
-	UserIDs []string `json:"user_ids"`
-}
-type TripInviteItem struct {
-	TripID    string  `json:"trip_id"`
-	UserID    string  `json:"user_id"`
-	Username  *string `json:"username,omitempty"`
-	Status    string  `json:"status"`     // pending
-	InvitedAt string  `json:"invited_at"` // RFC3339
+	// Empty - no longer accepts user_ids
 }
 type TripInviteResponse struct {
-	Invitations       []TripInviteItem `json:"invitations"`
-	NotificationsSent int              `json:"notifications_sent"`
+	InvitationLink string `json:"invitation_link"`
+	ExpiresAt      string `json:"expires_at"` // RFC3339
+	Message        string `json:"message"`
+}
+
+// Join via invitation link
+type TripJoinViaLinkRequest struct {
+	InvitationToken string `json:"invitation_token"`
+}
+type TripJoinViaLinkResponse struct {
+	Message string `json:"message"`
+	Trip    struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Destination string `json:"destination"`
+	} `json:"trip"`
+	Member struct {
+		UserID   string `json:"user_id"`
+		Role     string `json:"role"`
+		Status   string `json:"status"`
+		JoinedAt string `json:"joined_at"`
+	} `json:"member"`
 }
 
 // 3.2 Respond invitation
