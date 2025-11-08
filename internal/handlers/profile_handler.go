@@ -35,10 +35,10 @@ func NewProfileHandler(pool *pgxpool.Pool) *ProfileHandler {
 // @Security     BearerAuth
 // @Param        payload  body      dto.ProfileCreateRequest  true  "Profile payload"
 // @Success      200      {object}  dto.ProfileCreateResponse
-// @Failure      400      {object}  utils.ErrorResponse
-// @Failure      401      {object}  utils.ErrorResponse
-// @Failure      409      {object}  utils.ErrorResponse
-// @Failure      500      {object}  utils.ErrorResponse
+// @Failure      400      {object}  dto.ErrorResponse
+// @Failure      401      {object}  dto.ErrorResponse
+// @Failure      409      {object}  dto.ErrorResponse
+// @Failure      500      {object}  dto.ErrorResponse
 // @Router       /api/profile [post]
 func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// 1) ต้องผ่าน AuthMiddleware: ดึง userID จาก context
@@ -158,9 +158,9 @@ func (h *ProfileHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200  {object}  dto.ProfileGetResponse
-// @Failure      401  {object}  utils.ErrorResponse
-// @Failure      404  {object}  utils.ErrorResponse
-// @Failure      500  {object}  utils.ErrorResponse
+// @Failure      401  {object}  dto.ErrorResponse
+// @Failure      404  {object}  dto.ErrorResponse
+// @Failure      500  {object}  dto.ErrorResponse
 // @Router       /api/profile [get]
 func (h *ProfileHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	// 1) auth

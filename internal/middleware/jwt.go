@@ -53,6 +53,48 @@ func ValidateToken(tokenString string, cfg *config.JWTConfig) (*JWTClaims, error
 	return nil, jwt.ErrTokenMalformed
 }
 
+// InvitationTokenClaims represents the JWT claims for trip invitation link
+type InvitationTokenClaims struct {
+	TripID uuid.UUID `json:"trip_id"`
+	jwt.RegisteredClaims
+}
+
+// GenerateInvitationToken generates a JWT token for trip invitation link
+func GenerateInvitationToken(tripID uuid.UUID, cfg *config.JWTConfig) (string, error) {
+	claims := InvitationTokenClaims{
+		TripID: tripID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * 24 * time.Hour)), // 30 days
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Subject:   "trip_invitation",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(cfg.Secret))
+}
+
+// ValidateInvitationToken validates and parses the invitation token
+func ValidateInvitationToken(tokenString string, cfg *config.JWTConfig) (*InvitationTokenClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &InvitationTokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(cfg.Secret), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(*InvitationTokenClaims); ok && token.Valid {
+		if claims.Subject != "trip_invitation" {
+			return nil, jwt.ErrTokenMalformed
+		}
+		return claims, nil
+	}
+
+	return nil, jwt.ErrTokenMalformed
+}
+
 // AuthMiddleware validates JWT tokens in the Authorization header
 func AuthMiddleware(next http.HandlerFunc, cfg *config.JWTConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
