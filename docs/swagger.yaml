@@ -193,6 +193,44 @@ definitions:
             type: string
         type: object
     type: object
+  dto.ProfileUpdateRequest:
+    properties:
+      allergic_drugs:
+        description: '"" => NULL'
+        type: string
+      allergic_food:
+        description: '"" => NULL'
+        type: string
+      avatar_url:
+        description: '"" => NULL'
+        type: string
+      bio:
+        description: '"" => NULL'
+        type: string
+      birth_date:
+        description: '"" => NULL, else "YYYY-MM-DD" or RFC3339'
+        type: string
+      chronic_disease:
+        description: '"" => NULL'
+        type: string
+      display_name:
+        type: string
+      emergency_contact:
+        description: '"" => NULL'
+        type: string
+      first_name:
+        type: string
+      food_preferences:
+        description: '"" => NULL'
+        type: string
+      last_name:
+        type: string
+      phone:
+        description: '"" => NULL'
+        type: string
+      username:
+        type: string
+    type: object
   dto.RegisterRequest:
     properties:
       email:
@@ -869,6 +907,49 @@ paths:
       summary: Create user profile
       tags:
       - profile
+    put:
+      consumes:
+      - application/json
+      description: 6.3 อัปเดตโปรไฟล์ (ต้องมี Bearer JWT)
+      parameters:
+      - description: Profile update payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ProfileUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ProfileGetResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update user profile
+      tags:
+      - profile
   /api/trips:
     get:
       parameters:
@@ -903,6 +984,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: List trips
       tags:
       - trips
@@ -935,6 +1018,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Create a new trip
       tags:
       - trips
@@ -975,6 +1060,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Delete a trip
       tags:
       - trips
@@ -1008,6 +1095,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Get trip detail
       tags:
       - trips
@@ -1053,6 +1142,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Update a trip
       tags:
       - trips
@@ -1091,6 +1182,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: List invitations of a trip (creator only)
       tags:
       - trips
@@ -1178,6 +1271,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Leave a trip (for accepted members)
       tags:
       - trips
@@ -1227,6 +1322,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Remove a member from a trip (creator only)
       tags:
       - trips
@@ -1268,6 +1365,8 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
       summary: Join a trip via invitation link
       tags:
       - trips

@@ -84,7 +84,7 @@ func (h *ProfileHandler) Create(w http.ResponseWriter, r *http.Request) {
 			utils.WriteErrorResponse(w, http.StatusBadRequest, "Bad Request", "Profile already exists for this user")
 			return
 		}
-		if !errors.Is(err, pgx.ErrNoRows) && err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 			return
 		}
@@ -266,6 +266,21 @@ limit 1;
 	utils.WriteJSONResponse(w, http.StatusOK, resp)
 }
 
+// Update godoc
+// @Summary      Update user profile
+// @Description  6.3 อัปเดตโปรไฟล์ (ต้องมี Bearer JWT)
+// @Tags         profile
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        payload  body      dto.ProfileUpdateRequest  true  "Profile update payload"
+// @Success      200      {object}  dto.ProfileGetResponse
+// @Failure      400      {object}  dto.ErrorResponse
+// @Failure      401      {object}  dto.ErrorResponse
+// @Failure      404      {object}  dto.ErrorResponse
+// @Failure      409      {object}  dto.ErrorResponse
+// @Failure      500      {object}  dto.ErrorResponse
+// @Router       /api/profile [put]
 func (h *ProfileHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		utils.WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method Not Allowed", "only PUT is allowed")

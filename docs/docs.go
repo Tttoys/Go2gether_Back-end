@@ -509,6 +509,73 @@ const docTemplate = `{
                     }
                 }
             },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "6.3 อัปเดตโปรไฟล์ (ต้องมี Bearer JWT)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "profile"
+                ],
+                "summary": "Update user profile",
+                "parameters": [
+                    {
+                        "description": "Profile update payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.ProfileUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ProfileGetResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -573,6 +640,11 @@ const docTemplate = `{
         },
         "/api/trips": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -628,6 +700,11 @@ const docTemplate = `{
                 }
             },
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "consumes": [
                     "application/json"
                 ],
@@ -679,6 +756,11 @@ const docTemplate = `{
         },
         "/api/trips/join": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "consumes": [
                     "application/json"
                 ],
@@ -742,6 +824,11 @@ const docTemplate = `{
         },
         "/api/trips/{trip_id}": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -792,6 +879,11 @@ const docTemplate = `{
                 }
             },
             "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "consumes": [
                     "application/json"
                 ],
@@ -860,6 +952,11 @@ const docTemplate = `{
                 }
             },
             "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -921,6 +1018,11 @@ const docTemplate = `{
         },
         "/api/trips/{trip_id}/invitations": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1044,6 +1146,11 @@ const docTemplate = `{
         },
         "/api/trips/{trip_id}/leave": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1111,6 +1218,11 @@ const docTemplate = `{
         },
         "/api/trips/{trip_id}/members/{user_id}": {
             "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -1545,6 +1657,59 @@ const docTemplate = `{
                             "type": "string"
                         }
                     }
+                }
+            }
+        },
+        "dto.ProfileUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "allergic_drugs": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "allergic_food": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "avatar_url": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "bio": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "birth_date": {
+                    "description": "\"\" =\u003e NULL, else \"YYYY-MM-DD\" or RFC3339",
+                    "type": "string"
+                },
+                "chronic_disease": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "emergency_contact": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "food_preferences": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "phone": {
+                    "description": "\"\" =\u003e NULL",
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
                 }
             }
         },

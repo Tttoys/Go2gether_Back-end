@@ -132,6 +132,7 @@ func (h *TripsHandler) Trips(w http.ResponseWriter, r *http.Request) {
 // @Tags trips
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param payload body dto.CreateTripRequest true "Trip payload"
 // @Success 201 {object} dto.CreateTripResponse
 // @Failure 400 {object} dto.ErrorResponse
@@ -263,6 +264,7 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 // @Summary List trips
 // @Tags trips
 // @Produce json
+// @Security BearerAuth
 // @Param status query string false "draft|published|cancelled|all"
 // @Param limit query int false "items per page"
 // @Param offset query int false "offset"
@@ -379,6 +381,7 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 // @Summary Get trip detail
 // @Tags trips
 // @Produce json
+// @Security BearerAuth
 // @Param trip_id path string true "Trip ID"
 // @Success 200 {object} dto.TripDetailResponse
 // @Failure 400 {object} dto.ErrorResponse
@@ -539,6 +542,7 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 // @Tags trips
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param trip_id path string true "Trip ID"
 // @Param payload body dto.UpdateTripRequest true "Update payload"
 // @Success 200 {object} dto.CreateTripResponse
@@ -697,6 +701,7 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 // @Summary Delete a trip
 // @Tags trips
 // @Produce json
+// @Security BearerAuth
 // @Param trip_id path string true "Trip ID"
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} dto.ErrorResponse
@@ -843,6 +848,7 @@ func (h *TripsHandler) InviteMembers(w http.ResponseWriter, r *http.Request) {
 // @Tags trips
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param payload body dto.TripJoinViaLinkRequest true "Invitation token"
 // @Success 200 {object} dto.TripJoinViaLinkResponse
 // @Failure 400 {object} dto.ErrorResponse
@@ -990,6 +996,7 @@ func (h *TripsHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 // @Summary List invitations of a trip (creator only)
 // @Tags trips
 // @Produce json
+// @Security BearerAuth
 // @Param trip_id path string true "Trip ID"
 // @Success 200 {object} dto.TripInvitationsListResponse
 // @Failure 400 {object} dto.ErrorResponse
@@ -1129,6 +1136,7 @@ func (h *TripsHandler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 // @Summary Leave a trip (for accepted members)
 // @Tags trips
 // @Produce json
+// @Security BearerAuth
 // @Param trip_id path string true "Trip ID"
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} dto.ErrorResponse
@@ -1215,6 +1223,7 @@ func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 // @Summary Remove a member from a trip (creator only)
 // @Tags trips
 // @Produce json
+// @Security BearerAuth
 // @Param trip_id path string true "Trip ID"
 // @Param user_id path string true "User ID"
 // @Success 200 {object} map[string]string
