@@ -1008,6 +1008,38 @@ func (h *TripsHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 		return
 	}
+	// ส่ง notification ไปยัง creator ว่ามีคนเข้าร่วมทริป
+	var creatorID uuid.UUID
+	if err := h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id = $1`, tripID).Scan(&creatorID); err == nil {
+		// ดึง username ของผู้ที่ join (optional)
+		var joinerName string
+		_ = h.db.QueryRow(ctx, `SELECT COALESCE(p.username, u.email) 
+                              FROM users u 
+                              LEFT JOIN profiles p ON p.user_id = u.id 
+                             WHERE u.id = $1`, userID).Scan(&joinerName)
+		if joinerName == "" {
+			joinerName = userID.String()
+		}
+
+		// data payload สำหรับ client
+		data := map[string]any{
+			"trip_id":   tripID.String(),
+			"trip_name": tripName,
+			"user_id":   userID.String(),
+			"username":  joinerName,
+		}
+		action := "/trips/" + tripID.String()
+
+		// เช็ค notification_settings ก่อนก็ได้ (ถ้าต้องการเคารพการตั้งค่า)
+		// ที่ง่ายสุด: ลองส่งเลยก่อน แล้วค่อยเพิ่ม check ภายหลัง
+		_ = CreateNotification(ctx, h.db, creatorID,
+			"invitation_accepted", // <-- enum ชนิดของคุณ
+			"มีคนเข้าร่วมทริปแล้ว",
+			ptrString(joinerName+" เข้าร่วมทริป '"+tripName+"'"),
+			data,
+			&action,
+		)
+	}
 
 	resp := dto.TripJoinViaLinkResponse{
 		Message: "Successfully joined the trip",
@@ -1244,10 +1276,38 @@ func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusConflict, "Conflict", "You are not an active member of this trip")
 		return
 	}
+	var tripName string
+	_ = h.db.QueryRow(ctx, `SELECT creator_id, name FROM trips WHERE id = $1`, tripID).Scan(&creatorID, &tripName)
+
+	// ชื่อผู้ที่ออก
+	var leaverName string
+	_ = h.db.QueryRow(ctx, `SELECT COALESCE(p.username, u.email)
+                          FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+                         WHERE u.id = $1`, userID).Scan(&leaverName)
+	if leaverName == "" {
+		leaverName = userID.String()
+	}
+
+	data := map[string]any{
+		"trip_id":   tripID.String(),
+		"trip_name": tripName,
+		"user_id":   userID.String(),
+		"username":  leaverName,
+	}
+	action := "/trips/" + tripID.String()
+
+	_ = CreateNotification(ctx, h.db, creatorID,
+		"member_activity", // <-- enum ชนิดของคุณ
+		"มีสมาชิกออกจากทริป",
+		ptrString(leaverName+" ออกจากทริป '"+tripName+"'"),
+		data,
+		&action,
+	)
 
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
 		"message": "You have left the trip successfully",
 	})
+
 }
 
 // RemoveMember handles DELETE /api/trips/{trip_id}/members/{user_id}
@@ -1355,6 +1415,35 @@ func (h *TripsHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Member not found in this trip")
 		return
 	}
+	// โหลด trip name
+	var tripName string
+	_ = h.db.QueryRow(ctx, `SELECT name FROM trips WHERE id = $1`, tripID).Scan(&tripName)
+
+	// ชื่อ creator สำหรับแจ้งผู้ถูกลบ (optional)
+	var removerName string
+	_ = h.db.QueryRow(ctx, `
+    SELECT COALESCE(p.username, u.email)
+      FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+     WHERE u.id = $1`, requesterID).Scan(&removerName)
+	if removerName == "" {
+		removerName = requesterID.String()
+	}
+
+	msg := removerName + " ลบคุณออกจากทริป '" + tripName + "'"
+	data := map[string]any{
+		"trip_id":   tripID.String(),
+		"trip_name": tripName,
+		"by_user":   requesterID.String(),
+	}
+	action := "/trips/" + tripID.String()
+
+	_ = CreateNotification(ctx, h.db, targetUserID,
+		"member_activity", // <-- enum ชนิดของคุณ
+		"ถูกลบออกจากทริป",
+		&msg,
+		data,
+		&action,
+	)
 
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
 		"message": "Member removed successfully",
@@ -2195,3 +2284,4 @@ func dateOnlyUTC(t time.Time) time.Time {
 func daysInclusive(a, b time.Time) int {
 	return int(b.Sub(a).Hours()/24) + 1
 }
+func ptrString(s string) *string { return &s }

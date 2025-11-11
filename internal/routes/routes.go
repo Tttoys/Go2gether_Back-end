@@ -19,6 +19,7 @@ func SetupRoutes(
 	forgotPasswordHandler *handlers.ForgotPasswordHandler,
 	tripsHandler *handlers.TripsHandler,
 	profileHandler *handlers.ProfileHandler,
+	notificationsHandler *handlers.NotificationsHandler,
 	cfg *config.Config,
 ) {
 	// Health check routes
@@ -52,10 +53,10 @@ func SetupRoutes(
 	http.HandleFunc("/api/profile", middleware.AuthMiddleware(profileHandler.Handle, &cfg.JWT))
 	http.HandleFunc("/api/profile/check", middleware.AuthMiddleware(profileHandler.Check, &cfg.JWT))
 
+	http.HandleFunc("/api/notifications", middleware.AuthMiddleware(notificationsHandler.List, &cfg.JWT))
+
 	// Swagger documentation (must be registered before root handler)
-	http.Handle("/swagger/", httpSwagger.Handler(
-		httpSwagger.URL("http://localhost:8080/swagger/doc.json"),
-	))
+	http.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL("http://localhost:8080/swagger/doc.json")))
 
 	// Root route with 404 handling
 	http.HandleFunc("/", rootHandler)

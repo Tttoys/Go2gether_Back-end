@@ -87,12 +87,22 @@ func main() {
 	forgotPasswordHandler := handlers.NewForgotPasswordHandler(pool, cfg)
 	tripsHandler := handlers.NewTripsHandler(pool, cfg)
 	profileHandler := handlers.NewProfileHandler(pool)
+	notificationsHandler := handlers.NewNotificationsHandler(pool)
 
 	// Initialize Google OAuth handler
 	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, cfg.GoogleOAuth.ClientID, cfg.GoogleOAuth.ClientSecret, cfg.GoogleOAuth.RedirectURL, cfg)
 
 	// Setup all routes
-	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler, forgotPasswordHandler, tripsHandler, profileHandler, cfg)
+	routes.SetupRoutes(
+		authHandler,
+		healthHandler,
+		googleAuthHandler,
+		forgotPasswordHandler,
+		tripsHandler,
+		profileHandler,
+		notificationsHandler,
+		cfg,
+	)
 
 	// --- HTTP Server + Graceful Shutdown ---
 	// Setup CORS
