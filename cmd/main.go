@@ -39,27 +39,23 @@ import (
 )
 
 func main() {
-	// Load configuration
+	// ---- config + pgxpool เหมือนเดิม ----
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
-
-	// Debug: Check if email is configured
 	log.Printf("Email configured: %v", cfg.IsEmailConfigured())
 
-	// Get database connection string
 	dsn := cfg.GetDSN()
 	log.Println("Connecting to:", dsn)
 
-	// ตั้งค่า pgxpool + simple protocol (จำเป็นเมื่อผ่าน PgBouncer :6543)
 	dbCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		log.Fatalf("parse dsn: %v", err)
 	}
 	dbCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	dbCfg.ConnConfig.RuntimeParams["application_name"] = "go2gether-backend"
-	dbCfg.ConnConfig.RuntimeParams["statement_timeout"] = "30000" // 30s
+	dbCfg.ConnConfig.RuntimeParams["statement_timeout"] = "30000"
 	dbCfg.MaxConns = cfg.Database.MaxConns
 	dbCfg.MinConns = cfg.Database.MinConns
 	dbCfg.MaxConnLifetime = cfg.Database.MaxLifetime
@@ -70,7 +66,6 @@ func main() {
 	}
 	defer pool.Close()
 
-	// ทดสอบ ping ตอนบูต
 	{
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.Database.ConnTimeout)
 		defer cancel()
@@ -79,31 +74,42 @@ func main() {
 		}
 	}
 
-	// --- HTTP Handlers ---
-
-	// Initialize handlers
+	// ---- Handlers ----
 	authHandler := handlers.NewAuthHandler(pool, cfg)
 	healthHandler := handlers.NewHealthHandler(pool)
 	forgotPasswordHandler := handlers.NewForgotPasswordHandler(pool, cfg)
 	tripsHandler := handlers.NewTripsHandler(pool, cfg)
 	profileHandler := handlers.NewProfileHandler(pool)
+	googleAuthHandler := handlers.NewGoogleAuthHandler(
+		pool,
+		cfg.GoogleOAuth.ClientID,
+		cfg.GoogleOAuth.ClientSecret,
+		cfg.GoogleOAuth.RedirectURL,
+		cfg,
+	)
 
-	// Initialize Google OAuth handler
-	googleAuthHandler := handlers.NewGoogleAuthHandler(pool, cfg.GoogleOAuth.ClientID, cfg.GoogleOAuth.ClientSecret, cfg.GoogleOAuth.RedirectURL, cfg)
+	// ✅ เพิ่มบรรทัดนี้: สร้าง NotificationsHandler
+	notificationsHandler := handlers.NewNotificationsHandler(pool)
 
-	// Setup all routes
-	routes.SetupRoutes(authHandler, healthHandler, googleAuthHandler, forgotPasswordHandler, tripsHandler, profileHandler, cfg)
+	// ✅ และส่งเข้า routes.SetupRoutes (ต้องแก้ routes.go ให้รับตัวนี้ด้วย)
+	routes.SetupRoutes(
+		authHandler,
+		healthHandler,
+		googleAuthHandler,
+		forgotPasswordHandler,
+		tripsHandler,
+		profileHandler,
+		notificationsHandler, // <- เพิ่มพารามิเตอร์นี้
+		cfg,
+	)
 
-	// --- HTTP Server + Graceful Shutdown ---
-	// Setup CORS
+	// ---- CORS + HTTP server เหมือนเดิม ----
 	c := cors.New(cors.Options{
 		AllowedOrigins:   cfg.CORS.AllowedOrigins,
 		AllowedMethods:   cfg.CORS.AllowedMethods,
 		AllowedHeaders:   cfg.CORS.AllowedHeaders,
 		AllowCredentials: cfg.CORS.AllowCredentials,
 	})
-
-	// Wrap the default mux with CORS
 	handler := c.Handler(http.DefaultServeMux)
 
 	srv := &http.Server{
@@ -115,7 +121,6 @@ func main() {
 		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
 
-	// รันเซิร์ฟเวอร์แบบ async
 	go func() {
 		log.Printf("HTTP server listening on :%s", cfg.Server.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -123,7 +128,6 @@ func main() {
 		}
 	}()
 
-	// รอ SIGINT/SIGTERM เพื่อปิดอย่างสุภาพ
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt)
 	<-quit

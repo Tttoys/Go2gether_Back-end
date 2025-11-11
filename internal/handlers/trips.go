@@ -30,11 +30,16 @@ import (
 type TripsHandler struct {
 	db     *pgxpool.Pool
 	config *config.Config
+	noti   NotificationsService
 }
 
 // NewTripsHandler creates a new TripsHandler
 func NewTripsHandler(db *pgxpool.Pool, cfg *config.Config) *TripsHandler {
-	return &TripsHandler{db: db, config: cfg}
+	return &TripsHandler{
+		db:     db,
+		config: cfg,
+		noti:   NewNotificationsService(db), // <- ผูก service
+	}
 }
 
 func cleanPath(p string) string {
@@ -80,6 +85,7 @@ func (h *TripsHandler) Trips(w http.ResponseWriter, r *http.Request) {
 			h.CreateTrip(w, r)
 			return
 		}
+
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "unknown POST route")
 		return
 
@@ -1009,6 +1015,29 @@ func (h *TripsHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// แจ้ง creator ว่ามีสมาชิก join
+	{
+		ctx := r.Context()
+		var creatorID uuid.UUID
+		_ = h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id=$1`, tripID).Scan(&creatorID)
+
+		msg := fmt.Sprintf("ผู้ใช้ %s เข้าร่วมทริป %s แล้ว", userID.String(), tripName)
+		h.sendNoti(
+			ctx,
+			creatorID,
+			TypeMemberJoined, // <- enum ใน noti ของคุณ
+			"มีสมาชิกเข้าร่วมทริป",
+			&msg,
+			map[string]any{
+				"trip_id":  tripID.String(),
+				"user_id":  userID.String(),
+				"role":     curRole,
+				"tripName": tripName,
+			},
+			h.tripURL(tripID),
+		)
+	}
+
 	resp := dto.TripJoinViaLinkResponse{
 		Message: "Successfully joined the trip",
 	}
@@ -1245,6 +1274,29 @@ func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// แจ้ง creator ว่าสมาชิกออกจากทริป
+	{
+		ctx := r.Context()
+		var creatorID uuid.UUID
+		var tName string
+		_ = h.db.QueryRow(ctx, `SELECT creator_id, name FROM trips WHERE id=$1`, tripID).Scan(&creatorID, &tName)
+
+		msg := fmt.Sprintf("ผู้ใช้ %s ออกจากทริป %s", userID.String(), tName)
+		h.sendNoti(
+			ctx,
+			creatorID,
+			TypeMemberLeft, // <- enum มีอยู่แล้ว
+			"มีสมาชิกออกจากทริป",
+			&msg,
+			map[string]any{
+				"trip_id":  tripID.String(),
+				"user_id":  userID.String(),
+				"tripName": tName,
+			},
+			h.tripURL(tripID),
+		)
+	}
+
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
 		"message": "You have left the trip successfully",
 	})
@@ -1354,6 +1406,28 @@ func (h *TripsHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	if cmd.RowsAffected() == 0 {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Member not found in this trip")
 		return
+	}
+
+	// แจ้งผู้ถูกลบว่าโดนถอดออกจากทริป
+	{
+		ctx := r.Context()
+		var tName string
+		_ = h.db.QueryRow(ctx, `SELECT name FROM trips WHERE id=$1`, tripID).Scan(&tName)
+
+		msg := fmt.Sprintf("คุณถูกลบออกจากทริป %s", tName)
+		h.sendNoti(
+			ctx,
+			targetUserID,
+			TypeTripUpdate, // ใช้ประเภทอัปเดตทริป
+			"ถูกลบออกจากทริป",
+			&msg,
+			map[string]any{
+				"trip_id":  tripID.String(),
+				"tripName": tName,
+				"event":    "removed",
+			},
+			h.tripURL(tripID),
+		)
 	}
 
 	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
@@ -1643,6 +1717,30 @@ func (h *TripsHandler) SaveAvailability(w http.ResponseWriter, r *http.Request) 
 	if err := tx.Commit(ctx); err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 		return
+	}
+
+	// แจ้ง creator ว่าสมาชิกส่งวันว่างแล้ว
+	{
+		ctx := r.Context()
+		var creatorID uuid.UUID
+		var tName string
+		_ = h.db.QueryRow(ctx, `SELECT creator_id, name FROM trips WHERE id=$1`, tripID).Scan(&creatorID, &tName)
+
+		msg := fmt.Sprintf("ผู้ใช้ %s ส่งวันว่างสำหรับทริป %s แล้ว (%d วัน)", userID.String(), tName, len(validDates))
+		h.sendNoti(
+			ctx,
+			creatorID,
+			TypeAvailability, // enum: availability_updated
+			"มีการส่งวันว่าง",
+			&msg,
+			map[string]any{
+				"trip_id":        tripID.String(),
+				"user_id":        userID.String(),
+				"submitted_days": len(validDates),
+				"tripName":       tName,
+			},
+			h.tripURL(tripID),
+		)
 	}
 
 	resp := dto.TripAvailabilityResponse{
@@ -2012,6 +2110,41 @@ func (h *TripsHandler) GenerateAvailablePeriods(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// แจ้งสมาชิกที่ accepted ทุกคน ว่ามีช่วงเวลาที่แนะนำถูกสร้างใหม่
+	{
+		ctx := r.Context()
+		rows, err := h.db.Query(ctx, `
+		SELECT user_id
+		FROM trip_members
+		WHERE trip_id=$1 AND status='accepted'
+	`, tripID)
+		if err == nil {
+			defer rows.Close()
+			periodCount := len(periods)
+			for rows.Next() {
+				var uid uuid.UUID
+				if err := rows.Scan(&uid); err == nil {
+					msg := fmt.Sprintf("สร้างช่วงวันว่างแนะนำใหม่ %d ช่วง สำหรับทริป %s", periodCount, tName)
+					h.sendNoti(
+						ctx,
+						uid,
+						TypeTripUpdate, // ใช้ประเภทอัปเดตทริป
+						"อัปเดตช่วงวันว่างรวม",
+						&msg,
+						map[string]any{
+							"trip_id":          tripID.String(),
+							"total_periods":    periodCount,
+							"min_days":         in.MinDays,
+							"min_availability": in.MinAvailabilityMember,
+							"tripName":         tName,
+						},
+						h.tripURL(tripID),
+					)
+				}
+			}
+		}
+	}
+
 	// 7) ตอบกลับ (periods + stats)
 	type outPeriod struct {
 		PeriodNumber           int     `json:"period_number"`
@@ -2194,4 +2327,59 @@ func dateOnlyUTC(t time.Time) time.Time {
 
 func daysInclusive(a, b time.Time) int {
 	return int(b.Sub(a).Hours()/24) + 1
+}
+
+// pushNotification ส่งแจ้งเตือนเข้า table notifications โดยอิง DTO เดิมของโปรเจกต์
+// หมายเหตุ: ถ้าใน dto/notification.go ของคุณใช้ชื่อฟิลด์/ชนิดต่างกัน ให้แก้ mapping ตรงนี้ได้เลย
+func (h *TripsHandler) pushNotification(ctx context.Context, toUser uuid.UUID, tripID *uuid.UUID, nType, title, content string, meta map[string]interface{}) error {
+	// marshaling metadata -> jsonb
+	var metaJSON []byte
+	var err error
+	if meta != nil {
+		metaJSON, err = json.Marshal(meta)
+		if err != nil {
+			return err
+		}
+	}
+
+	// ตัวอย่าง SQL มาตรฐาน (ปรับ field ให้ตรง schema ของคุณ ถ้าแตกต่าง)
+	// columns ที่พบใช้บ่อย: id (uuid gen), recipient_id, trip_id, type, title, content, metadata(jsonb), created_at, read_at
+	if tripID != nil {
+		_, err = h.db.Exec(ctx, `
+			INSERT INTO notifications (recipient_id, trip_id, type, title, content, metadata)
+			VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '{}'::jsonb))
+		`, toUser, *tripID, nType, title, content, metaJSON)
+	} else {
+		_, err = h.db.Exec(ctx, `
+			INSERT INTO notifications (recipient_id, type, title, content, metadata)
+			VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))
+		`, toUser, nType, title, content, metaJSON)
+	}
+	return err
+}
+
+// sendNoti: ห่อเรียก NotificationsService ให้สั้นลง
+func (h *TripsHandler) sendNoti(
+	ctx context.Context,
+	to uuid.UUID,
+	typ Type,
+	title string,
+	message *string,
+	data map[string]any,
+	actionURL *string,
+) {
+	// fire-and-forget เพื่อไม่บล็อก request หลัก
+	go func() {
+		_ = h.noti.Create(ctx, to, string(typ), title, message, data, actionURL)
+	}()
+}
+
+// ช่วยสร้างลิงก์ไปหน้า trip ใน FE จาก FRONTEND_URL
+func (h *TripsHandler) tripURL(tripID uuid.UUID) *string {
+	base := os.Getenv("FRONTEND_URL")
+	if base == "" {
+		base = "http://localhost:8081"
+	}
+	u := fmt.Sprintf("%s/trips/%s", base, tripID.String())
+	return &u
 }

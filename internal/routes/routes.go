@@ -19,6 +19,7 @@ func SetupRoutes(
 	forgotPasswordHandler *handlers.ForgotPasswordHandler,
 	tripsHandler *handlers.TripsHandler,
 	profileHandler *handlers.ProfileHandler,
+	noti *handlers.NotificationsHandler,
 	cfg *config.Config,
 ) {
 	// Health check routes
@@ -51,6 +52,10 @@ func SetupRoutes(
 	// 6.4 GET  /api/profile/check  (ตรวจสอบว่า user มี profile หรือไม่)
 	http.HandleFunc("/api/profile", middleware.AuthMiddleware(profileHandler.Handle, &cfg.JWT))
 	http.HandleFunc("/api/profile/check", middleware.AuthMiddleware(profileHandler.Check, &cfg.JWT))
+
+	http.HandleFunc("/api/notifications", middleware.AuthMiddleware(noti.ListNotifications, &cfg.JWT))    // GET
+	http.HandleFunc("/api/notifications/read-all", middleware.AuthMiddleware(noti.MarkAllRead, &cfg.JWT)) // POST
+	http.HandleFunc("/api/notifications/", middleware.AuthMiddleware(noti.MarkRead, &cfg.JWT))            // POST /api/notifications/{id}/read
 
 	// Swagger documentation (must be registered before root handler)
 	http.Handle("/swagger/", httpSwagger.Handler(
