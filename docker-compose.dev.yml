@@ -1,0 +1,100 @@
+version: '3.8'
+
+# Development docker-compose with hot reload and volume mounts
+services:
+  # Optional: Local PostgreSQL Database (uncomment if you want to use local DB instead of Supabase)
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: go2gether-postgres-dev
+  #   environment:
+  #     POSTGRES_USER: go2gether
+  #     POSTGRES_PASSWORD: go2gether_password
+  #     POSTGRES_DB: go2gether_db
+  #     PGDATA: /var/lib/postgresql/data/pgdata
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_dev_data:/var/lib/postgresql/data
+  #     - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U go2gether -d go2gether_db"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - go2gether-network
+  #   restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: go2gether-backend-dev
+    env_file:
+      - .env
+    environment:
+      # Database (loaded from .env - Supabase)
+      # DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, DB_SSLMODE are loaded from .env
+      DB_MAX_CONNS: 10
+      DB_MIN_CONNS: 2
+      DB_MAX_LIFETIME: 1h
+      DB_CONN_TIMEOUT: 10s
+      DB_QUERY_TIMEOUT: 30s
+      
+      # Server (loaded from .env)
+      # SERVER_PORT is loaded from .env
+      SERVER_READ_TIMEOUT: 5s
+      SERVER_WRITE_TIMEOUT: 10s
+      SERVER_IDLE_TIMEOUT: 120s
+      SERVER_SHUTDOWN_TIMEOUT: 5s
+      
+      # JWT (loaded from .env)
+      # JWT_SECRET is loaded from .env
+      # Note: .env has JWT_EXPIRE_HOURS but config uses JWT_ACCESS_TTL, JWT_REFRESH_TTL, JWT_RESET_TTL
+      JWT_ACCESS_TTL: 168h  # 7 days (default, can override in .env)
+      JWT_REFRESH_TTL: 720h # 30 days (default, can override in .env)
+      JWT_RESET_TTL: 10m
+      
+      # Email (loaded from .env)
+      # SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_FROM, EMAIL_FROM_NAME are loaded from .env
+      SMTP_USE_TLS: "true"
+      SMTP_USE_SSL: "false"
+      
+      # Google OAuth (loaded from .env)
+      # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URL are loaded from .env
+      
+      # CORS
+      CORS_ALLOWED_ORIGINS: "*"
+      CORS_ALLOWED_METHODS: "GET,POST,PUT,DELETE,OPTIONS"
+      CORS_ALLOWED_HEADERS: "*"
+      CORS_ALLOW_CREDENTIALS: "true"
+      
+      # Frontend URL
+      FRONTEND_URL: http://localhost:8081
+      
+      # Development mode
+      GO_ENV: development
+    ports:
+      - "8080:8080"
+    # Remove depends_on postgres since we're using Supabase
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    networks:
+      - go2gether-network
+    volumes:
+      # Mount source code for hot reload (if using air or similar)
+      - .:/app
+      - /app/bin
+      - /app/vendor
+    restart: unless-stopped
+    command: go run cmd/main.go
+
+# volumes:
+#   postgres_dev_data:
+#     driver: local
+
+networks:
+  go2gether-network:
+    driver: bridge
+

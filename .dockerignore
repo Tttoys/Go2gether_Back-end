@@ -1,0 +1,68 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+# docs/ - Keep docs folder for swagger (needed for build)
+ADR-*.md
+EMAIL_SETUP.md
+CURL_EXAMPLES.md
+NOTIFICATION_CURL_EXAMPLES.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Build artifacts
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+*.test
+coverage.out
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Scripts
+*.sh
+notification_curl.sh
+
+# JSON config files (keep only necessary ones)
+curl_commands.json
+notification_curl_commands.json
+notification_curl_commands.json
+
+# Migration files (optional, can be run separately)
+migration_*.sql
+
