@@ -316,7 +316,8 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := r.Context().Value("user_id").(uuid.UUID); !ok {
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
@@ -347,25 +348,29 @@ func (h *TripsHandler) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var total int
-	if status == "all" {
-		if err := h.db.QueryRow(context.Background(), `SELECT COUNT(1) FROM trips`).Scan(&total); err != nil {
-			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
-			return
-		}
-	} else {
-		if err := h.db.QueryRow(context.Background(), `SELECT COUNT(1) FROM trips WHERE status = $1`, status).Scan(&total); err != nil {
-			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
-			return
-		}
+	if err := h.db.QueryRow(context.Background(),
+		`SELECT COUNT(1)
+           FROM trips t
+           JOIN trip_members tm ON tm.trip_id = t.id
+          WHERE tm.user_id = $1
+            AND tm.status = 'accepted'
+            AND ($2 = 'all' OR t.status = $2)`,
+		userID, status,
+	).Scan(&total); err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
 	}
 
 	rows, err := h.db.Query(context.Background(),
 		`SELECT t.id, t.name, t.destination, t.start_date, t.end_date, t.status, t.total_budget, t.currency, t.creator_id, t.created_at,
-                COALESCE((SELECT COUNT(DISTINCT tm.user_id) FROM trip_members tm WHERE tm.trip_id = t.id), 0) AS member_count
+                COALESCE((SELECT COUNT(DISTINCT tm2.user_id) FROM trip_members tm2 WHERE tm2.trip_id = t.id), 0) AS member_count
            FROM trips t
-          WHERE ($1 = 'all' OR t.status = $1)
+           JOIN trip_members tm ON tm.trip_id = t.id
+          WHERE tm.user_id = $1
+            AND tm.status = 'accepted'
+            AND ($2 = 'all' OR t.status = $2)
           ORDER BY t.created_at DESC
-          LIMIT $2 OFFSET $3`, status, limit, offset)
+          LIMIT $3 OFFSET $4`, userID, status, limit, offset)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 		return
