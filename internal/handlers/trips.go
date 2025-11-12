@@ -1021,7 +1021,9 @@ func (h *TripsHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 		var creatorID uuid.UUID
 		_ = h.db.QueryRow(ctx, `SELECT creator_id FROM trips WHERE id=$1`, tripID).Scan(&creatorID)
 
-		msg := fmt.Sprintf("ผู้ใช้ %s เข้าร่วมทริป %s แล้ว", userID.String(), tripName)
+		// ดึงชื่อผู้ใช้จาก profile
+		userDisplayName := h.getUserDisplayName(ctx, userID)
+		msg := fmt.Sprintf("%s เข้าร่วมทริป %s แล้ว", userDisplayName, tripName)
 		h.sendNoti(
 			ctx,
 			creatorID,
@@ -1029,10 +1031,11 @@ func (h *TripsHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 			"มีสมาชิกเข้าร่วมทริป",
 			&msg,
 			map[string]any{
-				"trip_id":  tripID.String(),
-				"user_id":  userID.String(),
-				"role":     curRole,
-				"tripName": tripName,
+				"trip_id":           tripID.String(),
+				"user_id":           userID.String(),
+				"role":              curRole,
+				"tripName":          tripName,
+				"user_display_name": userDisplayName,
 			},
 			h.tripURL(tripID),
 		)
@@ -1281,7 +1284,9 @@ func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 		var tName string
 		_ = h.db.QueryRow(ctx, `SELECT creator_id, name FROM trips WHERE id=$1`, tripID).Scan(&creatorID, &tName)
 
-		msg := fmt.Sprintf("ผู้ใช้ %s ออกจากทริป %s", userID.String(), tName)
+		// ดึงชื่อผู้ใช้จาก profile
+		userDisplayName := h.getUserDisplayName(ctx, userID)
+		msg := fmt.Sprintf("%s ออกจากทริป %s", userDisplayName, tName)
 		h.sendNoti(
 			ctx,
 			creatorID,
@@ -1289,9 +1294,10 @@ func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 			"มีสมาชิกออกจากทริป",
 			&msg,
 			map[string]any{
-				"trip_id":  tripID.String(),
-				"user_id":  userID.String(),
-				"tripName": tName,
+				"trip_id":           tripID.String(),
+				"user_id":           userID.String(),
+				"tripName":          tName,
+				"user_display_name": userDisplayName,
 			},
 			h.tripURL(tripID),
 		)
@@ -1726,7 +1732,9 @@ func (h *TripsHandler) SaveAvailability(w http.ResponseWriter, r *http.Request) 
 		var tName string
 		_ = h.db.QueryRow(ctx, `SELECT creator_id, name FROM trips WHERE id=$1`, tripID).Scan(&creatorID, &tName)
 
-		msg := fmt.Sprintf("ผู้ใช้ %s ส่งวันว่างสำหรับทริป %s แล้ว (%d วัน)", userID.String(), tName, len(validDates))
+		// ดึงชื่อผู้ใช้จาก profile
+		userDisplayName := h.getUserDisplayName(ctx, userID)
+		msg := fmt.Sprintf("%s ส่งวันว่างสำหรับทริป %s แล้ว (%d วัน)", userDisplayName, tName, len(validDates))
 		h.sendNoti(
 			ctx,
 			creatorID,
@@ -1734,10 +1742,11 @@ func (h *TripsHandler) SaveAvailability(w http.ResponseWriter, r *http.Request) 
 			"มีการส่งวันว่าง",
 			&msg,
 			map[string]any{
-				"trip_id":        tripID.String(),
-				"user_id":        userID.String(),
-				"submitted_days": len(validDates),
-				"tripName":       tName,
+				"trip_id":           tripID.String(),
+				"user_id":           userID.String(),
+				"submitted_days":    len(validDates),
+				"tripName":          tName,
+				"user_display_name": userDisplayName,
 			},
 			h.tripURL(tripID),
 		)
@@ -2317,6 +2326,33 @@ func (h *TripsHandler) GetAvailablePeriods(w http.ResponseWriter, r *http.Reques
 
 // ---------- helpers (ถ้ายังไม่มีในไฟล์นี้ ให้เพิ่ม) ----------
 
+// getUserDisplayName ดึง display_name หรือ username จาก profile
+// ถ้าไม่มี profile หรือไม่มี display_name จะใช้ username
+// ถ้าไม่มี username จะใช้ user_id เป็น fallback
+func (h *TripsHandler) getUserDisplayName(ctx context.Context, userID uuid.UUID) string {
+	var displayName, username *string
+	err := h.db.QueryRow(ctx, `
+		SELECT p.display_name, p.username
+		FROM profiles p
+		WHERE p.user_id = $1
+		LIMIT 1
+	`, userID).Scan(&displayName, &username)
+
+	if err != nil {
+		// ถ้าไม่มี profile ให้ใช้ user_id
+		return userID.String()
+	}
+
+	// ใช้ display_name ถ้ามี ถ้าไม่มีใช้ username ถ้าไม่มีทั้งคู่ใช้ user_id
+	if displayName != nil && strings.TrimSpace(*displayName) != "" {
+		return *displayName
+	}
+	if username != nil && strings.TrimSpace(*username) != "" {
+		return *username
+	}
+	return userID.String()
+}
+
 func mathRound2(v float64) float64 {
 	return math.Round(v*100) / 100
 }
@@ -2359,6 +2395,7 @@ func (h *TripsHandler) pushNotification(ctx context.Context, toUser uuid.UUID, t
 }
 
 // sendNoti: ห่อเรียก NotificationsService ให้สั้นลง
+// Production-ready: includes proper context handling, error logging, and retry logic
 func (h *TripsHandler) sendNoti(
 	ctx context.Context,
 	to uuid.UUID,
@@ -2368,9 +2405,56 @@ func (h *TripsHandler) sendNoti(
 	data map[string]any,
 	actionURL *string,
 ) {
+	// Validate inputs before spawning goroutine
+	if to == uuid.Nil {
+		log.Printf("Warning: Attempted to send notification to nil user_id (type=%s, title=%s)",
+			string(typ), title)
+		return
+	}
+	if strings.TrimSpace(title) == "" {
+		log.Printf("Warning: Attempted to send notification with empty title (user_id=%s, type=%s)",
+			to.String(), string(typ))
+		return
+	}
+
 	// fire-and-forget เพื่อไม่บล็อก request หลัก
+	// ใช้ context.Background() แทน request context เพื่อไม่ให้ถูก cancel เมื่อ request เสร็จ
 	go func() {
-		_ = h.noti.Create(ctx, to, string(typ), title, message, data, actionURL)
+		// สร้าง context ใหม่ที่มี timeout เพื่อป้องกัน goroutine ค้าง
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Retry logic: retry once if first attempt fails
+		maxRetries := 2
+		var lastErr error
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			err := h.noti.Create(bgCtx, to, string(typ), title, message, data, actionURL)
+			if err == nil {
+				// Success - no need to retry
+				return
+			}
+
+			lastErr = err
+			// Don't retry on validation errors or context timeout
+			if errors.Is(err, context.DeadlineExceeded) ||
+				strings.Contains(err.Error(), "required") ||
+				strings.Contains(err.Error(), "exceeds maximum") {
+				break
+			}
+
+			// Wait before retry (exponential backoff)
+			if attempt < maxRetries {
+				waitTime := time.Duration(attempt) * 100 * time.Millisecond
+				time.Sleep(waitTime)
+				// Create new context for retry
+				bgCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+			}
+		}
+
+		// Log error after all retries failed
+		log.Printf("Failed to create notification after %d attempts: %v (user_id=%s, type=%s, title=%s)",
+			maxRetries, lastErr, to.String(), string(typ), title)
 	}()
 }
 

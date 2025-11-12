@@ -1,0 +1,123 @@
+{
+  "base_url": "http://localhost:8080",
+  "endpoints": {
+    "list_all": {
+      "method": "GET",
+      "url": "http://localhost:8080/api/notifications",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "List all notifications (default: 20 items)"
+    },
+    "list_with_pagination": {
+      "method": "GET",
+      "url": "http://localhost:8080/api/notifications?limit=50&offset=0",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "List notifications with pagination"
+    },
+    "list_unread_only": {
+      "method": "GET",
+      "url": "http://localhost:8080/api/notifications?unread_only=true",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "List only unread notifications"
+    },
+    "list_by_type_member_joined": {
+      "method": "GET",
+      "url": "http://localhost:8080/api/notifications?type=member_joined",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "Filter by member_joined type"
+    },
+    "list_by_type_trip_update": {
+      "method": "GET",
+      "url": "http://localhost:8080/api/notifications?type=trip_update",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "Filter by trip_update type"
+    },
+    "list_by_type_availability": {
+      "method": "GET",
+      "url": "http://localhost:8080/api/notifications?type=availability_updated",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "Filter by availability_updated type"
+    },
+    "list_combined_filters": {
+      "method": "GET",
+      "url": "http://localhost:8080/api/notifications?unread_only=true&type=member_joined&limit=10&offset=0",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "Combined filters: unread + type + pagination"
+    },
+    "mark_read": {
+      "method": "POST",
+      "url": "http://localhost:8080/api/notifications/NOTIFICATION_ID/read",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "Mark single notification as read",
+      "note": "Replace NOTIFICATION_ID with actual UUID"
+    },
+    "mark_all_read": {
+      "method": "POST",
+      "url": "http://localhost:8080/api/notifications/read-all",
+      "headers": {
+        "Authorization": "Bearer YOUR_JWT_TOKEN",
+        "Content-Type": "application/json"
+      },
+      "description": "Mark all unread notifications as read"
+    }
+  },
+  "notification_types": [
+    "trip_invitation",
+    "invitation_accepted",
+    "invitation_declined",
+    "trip_update",
+    "availability_updated",
+    "member_joined",
+    "member_left"
+  ],
+  "query_parameters": {
+    "unread_only": {
+      "type": "boolean",
+      "values": ["true", "false"],
+      "default": "false",
+      "description": "Filter only unread notifications"
+    },
+    "type": {
+      "type": "string",
+      "values": "See notification_types array",
+      "description": "Filter by notification type"
+    },
+    "limit": {
+      "type": "integer",
+      "min": 1,
+      "max": 100,
+      "default": 20,
+      "description": "Number of items per page"
+    },
+    "offset": {
+      "type": "integer",
+      "min": 0,
+      "default": 0,
+      "description": "Pagination offset"
+    }
+  }
+}
+

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,6 +45,7 @@ func NewNotificationsService(db *pgxpool.Pool) NotificationsService {
 }
 
 // Implement the Create method for notificationsService
+// Production-ready: includes validation, proper error handling, and logging
 func (s *notificationsService) Create(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -52,58 +55,110 @@ func (s *notificationsService) Create(
 	data map[string]any,
 	actionURL *string,
 ) error {
-	var dataJSON []byte
-	var err error
-	if data != nil {
-		dataJSON, err = json.Marshal(data)
-		if err != nil {
-			return err
-		}
+	// Validation
+	if userID == uuid.Nil {
+		return errors.New("user_id cannot be nil")
+	}
+	if strings.TrimSpace(nType) == "" {
+		return errors.New("notification type is required")
+	}
+	if strings.TrimSpace(title) == "" {
+		return errors.New("notification title is required")
+	}
+	if len(title) > 255 {
+		return errors.New("notification title exceeds maximum length of 255 characters")
+	}
+	if message != nil && len(*message) > 10000 {
+		return errors.New("notification message exceeds maximum length of 10000 characters")
+	}
+	if actionURL != nil && len(*actionURL) > 2048 {
+		return errors.New("action_url exceeds maximum length of 2048 characters")
 	}
 
-	cmdTag, err := s.db.Exec(ctx, `
+	// Validate notification type
+	validTypes := map[string]bool{
+		"trip_invitation":      true,
+		"invitation_accepted":  true,
+		"invitation_declined":  true,
+		"trip_update":          true,
+		"availability_updated": true,
+		"member_joined":        true,
+		"member_left":          true,
+	}
+	if !validTypes[nType] {
+		log.Printf("Warning: Unknown notification type: %s (user_id=%s)", nType, userID.String())
+		// ไม่ return error เพื่อไม่ให้บล็อกการทำงาน แต่ log warning
+	}
+
+	// Prepare JSON data
+	var dataJSON interface{}
+	if len(data) > 0 {
+		jsonBytes, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("failed to marshal notification data: %w", err)
+		}
+		// Limit JSON size to prevent abuse (1MB limit)
+		if len(jsonBytes) > 1024*1024 {
+			return errors.New("notification data exceeds maximum size of 1MB")
+		}
+		dataJSON = string(jsonBytes)
+	} else {
+		dataJSON = nil
+	}
+
+	// Insert with context timeout
+	insertCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	cmdTag, err := s.db.Exec(insertCtx, `
 		INSERT INTO notifications (user_id, type, title, message, data, action_url)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6)
 	`, userID, nType, title, message, dataJSON, actionURL)
+
 	if err != nil {
-		return err
+		// Check for specific database errors
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("notification creation timeout: %w", err)
+		}
+		// Log database errors for monitoring
+		if strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "network") {
+			log.Printf("Database connection error creating notification: %v (user_id=%s, type=%s)",
+				err, userID.String(), nType)
+		}
+		return fmt.Errorf("failed to insert notification: %w", err)
 	}
+
 	if cmdTag.RowsAffected() != 1 {
-		return errors.New("failed to insert notification")
+		log.Printf("Warning: Notification insert affected %d rows instead of 1 (user_id=%s, type=%s)",
+			cmdTag.RowsAffected(), userID.String(), nType)
+		return errors.New("unexpected number of rows affected")
 	}
+
 	return nil
 }
 
+// Create is deprecated - use NotificationsService.Create instead
+// This function is kept for backward compatibility but should not be used in new code
+// Deprecated: Use NotificationsService.Create instead
 func Create(
 	ctx context.Context,
 	db *pgxpool.Pool,
-	userID string, // ผู้รับ noti (uuid string)
-	typ Type, // ต้องเป็นค่าที่ enum มีอยู่แล้ว
-	title string, // หัวข้อ
-	message *string, // เนื้อความ (nullable)
-	data map[string]any, // payload (nullable)
-	actionURL *string, // ลิงก์กดไปหน้าใด (nullable)
+	userID string,
+	typ Type,
+	title string,
+	message *string,
+	data map[string]any,
+	actionURL *string,
 ) error {
-	var dataJSON []byte
-	var err error
-	if data != nil {
-		dataJSON, err = json.Marshal(data)
-		if err != nil {
-			return err
-		}
+	// Parse userID to UUID
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return fmt.Errorf("invalid user_id format: %w", err)
 	}
 
-	cmdTag, err := db.Exec(ctx, `
-		INSERT INTO notifications (user_id, type, title, message, data, action_url)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, userID, string(typ), title, message, dataJSON, actionURL)
-	if err != nil {
-		return err
-	}
-	if cmdTag.RowsAffected() != 1 {
-		return errors.New("failed to insert notification")
-	}
-	return nil
+	// Use the service implementation
+	service := NewNotificationsService(db)
+	return service.Create(ctx, uid, string(typ), title, message, data, actionURL)
 }
 
 // NotificationsHandler: HTTP endpoints (list/mark read/mark all read)
@@ -141,71 +196,111 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Parse and validate query parameters
 	q := r.URL.Query()
 	unreadOnly := strings.EqualFold(q.Get("unread_only"), "true")
 	typ := strings.TrimSpace(q.Get("type"))
+
+	// Validate and parse limit (default 20, max 100)
 	limit := 20
-	offset := 0
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			if n > 100 {
 				n = 100
 			}
 			limit = n
+		} else {
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid limit", "limit must be a positive integer")
+			return
 		}
 	}
+
+	// Validate and parse offset (default 0, min 0)
+	offset := 0
 	if v := q.Get("offset"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			offset = n
+		} else {
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid offset", "offset must be a non-negative integer")
+			return
 		}
 	}
 
-	// count unread
+	// Validate notification type if provided
+	if typ != "" {
+		validTypes := map[string]bool{
+			"trip_invitation":      true,
+			"invitation_accepted":  true,
+			"invitation_declined":  true,
+			"trip_update":          true,
+			"availability_updated": true,
+			"member_joined":        true,
+			"member_left":          true,
+		}
+		if !validTypes[typ] {
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid type", "invalid notification type")
+			return
+		}
+	}
+
+	// Count unread notifications
 	var unreadCount int
-	if err := h.db.QueryRow(r.Context(),
+	if err := h.db.QueryRow(ctx,
 		`SELECT COUNT(1) FROM notifications WHERE user_id=$1 AND read=false`, userID,
 	).Scan(&unreadCount); err != nil {
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		log.Printf("Error counting unread notifications: %v (user_id=%s)", err, userID.String())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", "Failed to count unread notifications")
 		return
 	}
 
-	// total and list query
+	// Build query with proper parameterization to prevent SQL injection
 	args := []any{userID}
 	where := `WHERE user_id=$1`
-	arg := 2
+	argNum := 2
+
 	if unreadOnly {
 		where += " AND read=false"
 	}
 	if typ != "" {
-		where += " AND type=$" + strconv.Itoa(arg)
+		where += fmt.Sprintf(" AND type=$%d", argNum)
 		args = append(args, typ)
-		arg++
+		argNum++
 	}
 
-	// total
-	total := 0
-	if err := h.db.QueryRow(r.Context(),
-		`SELECT COUNT(1) FROM notifications `+where, args...,
+	// Count total matching notifications
+	var total int
+	if err := h.db.QueryRow(ctx,
+		fmt.Sprintf(`SELECT COUNT(1) FROM notifications %s`, where), args...,
 	).Scan(&total); err != nil {
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		log.Printf("Error counting notifications: %v (user_id=%s)", err, userID.String())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", "Failed to count notifications")
 		return
 	}
 
-	// page
+	// Fetch notifications with pagination
 	args = append(args, limit, offset)
-	rows, err := h.db.Query(r.Context(),
-		`SELECT id, type, title, message, data, action_url, read, created_at
-		   FROM notifications `+where+`
-		 ORDER BY created_at DESC
-		 LIMIT $`+strconv.Itoa(arg)+` OFFSET $`+strconv.Itoa(arg+1), args...)
+	query := fmt.Sprintf(`
+		SELECT id, type, title, message, data, action_url, read, created_at
+		FROM notifications %s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, where, argNum, argNum+1)
+
+	rows, err := h.db.Query(ctx, query, args...)
 	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		log.Printf("Error querying notifications: %v (user_id=%s)", err, userID.String())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", "Failed to fetch notifications")
 		return
 	}
 	defer rows.Close()
@@ -223,13 +318,21 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 			createdAt time.Time
 		)
 		if err := rows.Scan(&id, &typStr, &title, &message, &dataRaw, &actionURL, &read, &createdAt); err != nil {
-			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			log.Printf("Error scanning notification row: %v (user_id=%s)", err, userID.String())
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", "Failed to process notification data")
 			return
 		}
+
+		// Parse JSON data safely
 		var data map[string]any
 		if len(dataRaw) > 0 && string(dataRaw) != "null" {
-			_ = json.Unmarshal(dataRaw, &data) // ถ้า error ปล่อยว่าง
+			if err := json.Unmarshal(dataRaw, &data); err != nil {
+				log.Printf("Warning: Failed to unmarshal notification data: %v (notification_id=%s)", err, id.String())
+				// Continue with empty data instead of failing
+				data = nil
+			}
 		}
+
 		items = append(items, dto.NotificationItem{
 			ID:        id.String(),
 			Type:      typStr,
@@ -241,8 +344,10 @@ func (h *NotificationsHandler) ListNotifications(w http.ResponseWriter, r *http.
 			CreatedAt: createdAt.UTC().Format(time.RFC3339),
 		})
 	}
+
 	if err := rows.Err(); err != nil {
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		log.Printf("Error iterating notification rows: %v (user_id=%s)", err, userID.String())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", "Failed to process notifications")
 		return
 	}
 
@@ -275,39 +380,66 @@ func (h *NotificationsHandler) MarkRead(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
 
+	// Parse notification ID from URL path
 	path := r.URL.Path // /api/notifications/{id}/read
 	rest := strings.TrimPrefix(path, "/api/notifications/")
 	slash := strings.Index(rest, "/")
 	if slash <= 0 || !strings.HasSuffix(path, "/read") {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid id")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "missing or invalid notification id")
 		return
 	}
-	idStr := rest[:slash]
-	nID, err := uuid.Parse(idStr)
-	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid id", "id must be UUID")
+	idStr := strings.TrimSpace(rest[:slash])
+	if idStr == "" {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid path", "notification id is required")
 		return
 	}
 
-	// อนุญาตเฉพาะ noti ของตัวเอง
-	cmd, err := h.db.Exec(r.Context(),
-		`UPDATE notifications SET read=true WHERE id=$1 AND user_id=$2`, nID, userID,
+	nID, err := uuid.Parse(idStr)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid id", "notification id must be a valid UUID")
+		return
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	// Update notification - only allow users to mark their own notifications as read
+	cmd, err := h.db.Exec(ctx,
+		`UPDATE notifications SET read=true WHERE id=$1 AND user_id=$2 AND read=false`,
+		nID, userID,
 	)
 	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		log.Printf("Error marking notification as read: %v (notification_id=%s, user_id=%s)",
+			err, nID.String(), userID.String())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", "Failed to update notification")
 		return
 	}
+
 	if cmd.RowsAffected() == 0 {
-		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Notification not found")
+		// Check if notification exists but belongs to another user or already read
+		var exists bool
+		if err := h.db.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM notifications WHERE id=$1)`, nID,
+		).Scan(&exists); err == nil && exists {
+			utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden",
+				"Notification not found or already marked as read")
+		} else {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Notification not found")
+		}
 		return
 	}
-	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "Notification marked as read"})
+
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{
+		"message": "Notification marked as read",
+	})
 }
 
 // -----------------------------------------------------------------------------
@@ -325,17 +457,30 @@ func (h *NotificationsHandler) MarkAllRead(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
 		return
 	}
-	_, err := h.db.Exec(r.Context(),
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Update all unread notifications for the user
+	cmd, err := h.db.Exec(ctx,
 		`UPDATE notifications SET read=true WHERE user_id=$1 AND read=false`, userID,
 	)
 	if err != nil {
-		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		log.Printf("Error marking all notifications as read: %v (user_id=%s)", err, userID.String())
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", "Failed to update notifications")
 		return
 	}
-	utils.WriteJSONResponse(w, http.StatusOK, map[string]string{"message": "All notifications marked as read"})
+
+	updatedCount := cmd.RowsAffected()
+	utils.WriteJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"message":       "All notifications marked as read",
+		"updated_count": updatedCount,
+	})
 }
