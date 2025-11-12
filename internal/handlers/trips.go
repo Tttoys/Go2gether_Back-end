@@ -1879,7 +1879,8 @@ func (h *TripsHandler) GetMyAvailability(w http.ResponseWriter, r *http.Request)
 // @Accept json
 // @Produce json
 // @Param trip_id path string true "Trip ID"
-// @Param payload body struct{ MinDays int `json:"min_days"`; MinAvailabilityMember int `json:"min_availability_member"` } true "Generate params"
+// @Param min_days body int false "Minimum days for a period (default: 1)"
+// @Param min_availability_member body int false "Minimum number of available members (default: 1)"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 401 {object} dto.ErrorResponse

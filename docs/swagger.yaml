@@ -99,6 +99,46 @@ definitions:
     - email
     - password
     type: object
+  dto.NotificationItem:
+    properties:
+      action_url:
+        type: string
+      created_at:
+        type: string
+      data:
+        additionalProperties: {}
+        type: object
+      id:
+        type: string
+      message:
+        type: string
+      read:
+        type: boolean
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  dto.NotificationListPagination:
+    properties:
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+      unread_count:
+        type: integer
+    type: object
+  dto.NotificationListResponse:
+    properties:
+      notifications:
+        items:
+          $ref: '#/definitions/dto.NotificationItem'
+        type: array
+      pagination:
+        $ref: '#/definitions/dto.NotificationListPagination'
+    type: object
   dto.Pagination:
     properties:
       limit:
@@ -262,6 +302,66 @@ definitions:
     properties:
       message:
         example: Password has been reset successfully
+        type: string
+    type: object
+  dto.TripAvailabilityDateItem:
+    properties:
+      date:
+        description: YYYY-MM-DD
+        type: string
+    type: object
+  dto.TripAvailabilityRequest:
+    properties:
+      dates:
+        description: array of "YYYY-MM-DD"
+        items:
+          type: string
+        type: array
+    type: object
+  dto.TripAvailabilityResponse:
+    properties:
+      message:
+        type: string
+      summary:
+        $ref: '#/definitions/dto.TripAvailabilitySummary'
+    type: object
+  dto.TripAvailabilitySummary:
+    properties:
+      submitted_dates:
+        type: integer
+      total_dates:
+        type: integer
+    type: object
+  dto.TripDateRange:
+    properties:
+      end_date:
+        description: normalized to last day of end month
+        type: string
+      start_date:
+        description: normalized to first day of start month
+        type: string
+      total_dates:
+        description: inclusive count
+        type: integer
+    type: object
+  dto.TripDatesResponse:
+    properties:
+      date_range:
+        $ref: '#/definitions/dto.TripDateRange'
+      trip:
+        $ref: '#/definitions/dto.TripDatesTrip'
+    type: object
+  dto.TripDatesTrip:
+    properties:
+      end_date:
+        description: from trips.end_date   (YYYY-MM-DD)
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      start_date:
+        description: from trips.start_date (YYYY-MM-DD)
         type: string
     type: object
   dto.TripDetailResponse:
@@ -442,6 +542,15 @@ definitions:
         type: string
       username:
         type: string
+    type: object
+  dto.TripMyAvailabilityResponse:
+    properties:
+      availability:
+        items:
+          $ref: '#/definitions/dto.TripAvailabilityDateItem'
+        type: array
+      summary:
+        $ref: '#/definitions/dto.TripAvailabilitySummary'
     type: object
   dto.TripPermissions:
     properties:
@@ -846,6 +955,108 @@ paths:
       summary: Verify OTP
       tags:
       - authentication
+  /api/notifications:
+    get:
+      description: List user notifications with filters and pagination.
+      parameters:
+      - description: true|false (default false)
+        in: query
+        name: unread_only
+        type: boolean
+      - description: filter by type
+        in: query
+        name: type
+        type: string
+      - description: default 20 (max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: default 0
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.NotificationListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /api/notifications/{id}/read:
+    post:
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Mark a notification as read
+      tags:
+      - notifications
+  /api/notifications/read-all:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications as read
+      tags:
+      - notifications
   /api/profile:
     get:
       consumes:
@@ -1177,6 +1388,232 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a trip
+      tags:
+      - trips
+  /api/trips/{trip_id}/availability:
+    post:
+      consumes:
+      - application/json
+      description: 'บันทึกวันว่างของผู้ใช้ในทริป โดยรูปแบบ normalized: หนึ่งแถว/หนึ่งวัน/หนึ่งคน/หนึ่งทริป'
+      parameters:
+      - description: Trip ID
+        in: path
+        name: trip_id
+        required: true
+        type: string
+      - description: Availability payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TripAvailabilityRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TripAvailabilityResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save my availability for a trip (one row per day per user)
+      tags:
+      - trips
+  /api/trips/{trip_id}/availability/generate-periods:
+    post:
+      consumes:
+      - application/json
+      description: คำนวณช่วงวันที่สมาชิกว่างตามเกณฑ์ แล้วลบข้อมูลเดิมและบันทึกของใหม่ลงตาราง
+        available_periods ทันที
+      parameters:
+      - description: Trip ID
+        in: path
+        name: trip_id
+        required: true
+        type: string
+      - description: 'Minimum days for a period (default: 1)'
+        in: body
+        name: min_days
+        schema:
+          type: integer
+      - description: 'Minimum number of available members (default: 1)'
+        in: body
+        name: min_availability_member
+        schema:
+          type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Generate continuous periods where members are available (and persist
+        to available_periods)
+      tags:
+      - availability
+  /api/trips/{trip_id}/availability/me:
+    get:
+      description: คืนรายการวันที่ผู้ใช้ (me) ทำเครื่องหมายว่าว่างในทริป พร้อมสรุปจำนวนวันทั้งหมดของทริป/จำนวนที่ส่งมา
+      parameters:
+      - description: Trip ID
+        in: path
+        name: trip_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TripMyAvailabilityResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get my availability dates for a trip
+      tags:
+      - trips
+  /api/trips/{trip_id}/available-periods:
+    get:
+      description: อ่านช่วงวันที่บันทึกไว้ในตาราง available_periods (กัน NULL ให้ปลอดภัย)
+      parameters:
+      - description: Trip ID
+        in: path
+        name: trip_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get generated available periods of a trip
+      tags:
+      - availability
+  /api/trips/{trip_id}/dates:
+    get:
+      description: ส่งช่วงวันที่ตรงตาม start_date ถึง end_date ของทริป และจำนวนวันรวมแบบ
+        inclusive
+      parameters:
+      - description: Trip ID
+        in: path
+        name: trip_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TripDatesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get trip's exact date range (for availability picking)
       tags:
       - trips
   /api/trips/{trip_id}/invitations:
