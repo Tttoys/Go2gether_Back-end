@@ -1028,12 +1028,12 @@ func (h *TripsHandler) JoinViaLink(w http.ResponseWriter, r *http.Request) {
 
 		// ดึงชื่อผู้ใช้จาก profile
 		userDisplayName := h.getUserDisplayName(ctx, userID)
-		msg := fmt.Sprintf("%s เข้าร่วมทริป %s แล้ว", userDisplayName, tripName)
+		msg := fmt.Sprintf("%s has joined %s", userDisplayName, tripName)
 		h.sendNoti(
 			ctx,
 			creatorID,
 			TypeMemberJoined, // <- enum ใน noti ของคุณ
-			"มีสมาชิกเข้าร่วมทริป",
+			"Member Joined Trip",
 			&msg,
 			map[string]any{
 				"trip_id":           tripID.String(),
@@ -1291,12 +1291,12 @@ func (h *TripsHandler) LeaveTrip(w http.ResponseWriter, r *http.Request) {
 
 		// ดึงชื่อผู้ใช้จาก profile
 		userDisplayName := h.getUserDisplayName(ctx, userID)
-		msg := fmt.Sprintf("%s ออกจากทริป %s", userDisplayName, tName)
+		msg := fmt.Sprintf("%s has left %s", userDisplayName, tName)
 		h.sendNoti(
 			ctx,
 			creatorID,
 			TypeMemberLeft, // <- enum มีอยู่แล้ว
-			"มีสมาชิกออกจากทริป",
+			"Member Left Trip",
 			&msg,
 			map[string]any{
 				"trip_id":           tripID.String(),
@@ -1425,12 +1425,12 @@ func (h *TripsHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		var tName string
 		_ = h.db.QueryRow(ctx, `SELECT name FROM trips WHERE id=$1`, tripID).Scan(&tName)
 
-		msg := fmt.Sprintf("คุณถูกลบออกจากทริป %s", tName)
+		msg := fmt.Sprintf("You were removed from %s", tName)
 		h.sendNoti(
 			ctx,
 			targetUserID,
 			TypeTripUpdate, // ใช้ประเภทอัปเดตทริป
-			"ถูกลบออกจากทริป",
+			"You Were Removed from Trip",
 			&msg,
 			map[string]any{
 				"trip_id":  tripID.String(),
@@ -1739,12 +1739,12 @@ func (h *TripsHandler) SaveAvailability(w http.ResponseWriter, r *http.Request) 
 
 		// ดึงชื่อผู้ใช้จาก profile
 		userDisplayName := h.getUserDisplayName(ctx, userID)
-		msg := fmt.Sprintf("%s ส่งวันว่างสำหรับทริป %s แล้ว (%d วัน)", userDisplayName, tName, len(validDates))
+		msg := fmt.Sprintf("%s create availability for %s (%d days)", userDisplayName, tName, len(validDates))
 		h.sendNoti(
 			ctx,
 			creatorID,
 			TypeAvailability, // enum: availability_updated
-			"มีการส่งวันว่าง",
+			"Created Availability",
 			&msg,
 			map[string]any{
 				"trip_id":           tripID.String(),
@@ -2139,12 +2139,12 @@ func (h *TripsHandler) GenerateAvailablePeriods(w http.ResponseWriter, r *http.R
 			for rows.Next() {
 				var uid uuid.UUID
 				if err := rows.Scan(&uid); err == nil {
-					msg := fmt.Sprintf("สร้างช่วงวันว่างแนะนำใหม่ %d ช่วง สำหรับทริป %s", periodCount, tName)
+					msg := fmt.Sprintf("%d new suggested periods generated for %s", periodCount, tName)
 					h.sendNoti(
 						ctx,
 						uid,
 						TypeTripUpdate, // ใช้ประเภทอัปเดตทริป
-						"อัปเดตช่วงวันว่างรวม",
+						"Updated Avvailability Periods",
 						&msg,
 						map[string]any{
 							"trip_id":          tripID.String(),
