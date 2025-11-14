@@ -2,12 +2,20 @@ package dto
 
 // CreateTripRequest represents the payload to create a trip
 type CreateTripRequest struct {
-	Name        string  `json:"name"`
-	Destination string  `json:"destination"`
-	StartDate   string  `json:"start_date"` // RFC3339 or YYYY-MM-DD
-	EndDate     string  `json:"end_date"`   // RFC3339 or YYYY-MM-DD
-	Description string  `json:"description"`
-	Status      string  `json:"status"` // draft | published | cancelled
+	Name        string `json:"name"`
+	Destination string `json:"destination"`
+	StartDate   string `json:"start_date"` // YYYY-MM-DD
+	EndDate     string `json:"end_date"`   // YYYY-MM-DD
+	Description string `json:"description"`
+	Status      string `json:"status"` // draft | published | cancelled
+
+	// NEW: budget ต่อหมวด
+	Food      float64 `json:"food"`
+	Hotel     float64 `json:"hotel"`
+	Shopping  float64 `json:"shopping"`
+	Transport float64 `json:"transport"`
+
+	// ยังรองรับของเก่า
 	TotalBudget float64 `json:"total_budget"`
 	Currency    string  `json:"currency"`
 }
@@ -15,12 +23,19 @@ type CreateTripRequest struct {
 // UpdateTripRequest represents fields allowed to update a trip
 // All fields are optional; only provided ones will be updated
 type UpdateTripRequest struct {
-	Name        *string  `json:"name"`
-	Destination *string  `json:"destination"`
-	Description *string  `json:"description"`
-	StartMonth  *string  `json:"start_month"` // YYYY-MM
-	EndMonth    *string  `json:"end_month"`   // YYYY-MM
-	TotalBudget *float64 `json:"total_budget"`
+	Name        *string `json:"name"`
+	Destination *string `json:"destination"`
+	Description *string `json:"description"`
+	StartDate   *string `json:"start_date"` // YYYY-MM-DD
+	EndDate     *string `json:"end_date"`   // YYYY-MM-DD
+
+	// NEW: budget ต่อหมวด (optional)
+	Food      *float64 `json:"food,omitempty"`
+	Hotel     *float64 `json:"hotel,omitempty"`
+	Shopping  *float64 `json:"shopping,omitempty"`
+	Transport *float64 `json:"transport,omitempty"`
+
+	TotalBudget *float64 `json:"total_budget,omitempty"`
 	Status      *string  `json:"status"` // draft | published | cancelled
 }
 
@@ -38,6 +53,9 @@ type TripResponse struct {
 	CreatorID   string  `json:"creator_id"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
+
+	// NEW
+	Budget TripBudgetResponse `json:"budget"`
 }
 
 // CreateTripResponse envelope
@@ -118,6 +136,9 @@ type TripDetailTrip struct {
 	CreatorID   string  `json:"creator_id"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
+
+	// NEW
+	Budget TripBudgetResponse `json:"budget"`
 }
 
 // TripDetailResponse envelope
@@ -177,4 +198,13 @@ type TripInvitationsStats struct {
 type TripInvitationsListResponse struct {
 	Invitations []TripInvitationListItem `json:"invitations"`
 	Stats       TripInvitationsStats     `json:"stats"`
+}
+
+// NEW: budget breakdown ใน response
+type TripBudgetResponse struct {
+	Food      float64 `json:"food"`
+	Hotel     float64 `json:"hotel"`
+	Shopping  float64 `json:"shopping"`
+	Transport float64 `json:"transport"`
+	Total     float64 `json:"total"` // = total_budget ใน trips
 }
