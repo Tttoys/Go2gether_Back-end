@@ -191,8 +191,9 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 
 	var req dto.CreateTripRequest
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields() // กัน field แปลก
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
+		log.Printf("decode error: %v", err) // เพิ่มบรรทัดนี้
 		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid request data", "Malformed JSON body")
 		return
 	}
@@ -242,15 +243,57 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	if currency == "" {
 		currency = "THB"
 	}
+
+	// NEW: ดึง budget แยกหมวดจาก request
+	food := req.Food
+	hotel := req.Hotel
+	shopping := req.Shopping
+	transport := req.Transport
+
+	if food < 0 || hotel < 0 || shopping < 0 || transport < 0 {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "budget categories cannot be negative")
+		return
+	}
+
+	// totalBudget เริ่มจากของเดิม (รองรับ client เก่า)
 	totalBudget := req.TotalBudget
-	if totalBudget < 0 {
-		totalBudget = 0
+
+	// ถ้ามี breakdown อย่างน้อย 1 หมวด → ใช้ breakdown เป็นหลัก
+	if food != 0 || hotel != 0 || shopping != 0 || transport != 0 {
+		totalBudget = food + hotel + shopping + transport
+	} else {
+		// ถ้าไม่มี breakdown แต่มี total_budget → เอา total_budget ไปลง food ทั้งก้อน
+		if totalBudget < 0 {
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "total_budget cannot be negative")
+			return
+		}
+		if totalBudget > 0 {
+			food = totalBudget
+		}
 	}
 
 	_, err = h.db.Exec(context.Background(),
 		`INSERT INTO trips (id, name, destination, start_date, end_date, description, status, total_budget, currency, creator_id, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		newID, req.Name, req.Destination, startAt, endAt, req.Description, req.Status, totalBudget, currency, userID, now, now,
+	)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	// NEW: บันทึก budget breakdown ลง budget_categories
+	_, err = h.db.Exec(
+		context.Background(),
+		`INSERT INTO budget_categories (trip_id, order_index, food, hotel, shopping, transport)
+         VALUES ($1, 1, $2, $3, $4, $5)
+         ON CONFLICT (trip_id, order_index)
+         DO UPDATE SET
+            food = EXCLUDED.food,
+            hotel = EXCLUDED.hotel,
+            shopping = EXCLUDED.shopping,
+            transport = EXCLUDED.transport,
+            updated_at = now()`,
+		newID, food, hotel, shopping, transport,
 	)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
@@ -292,6 +335,14 @@ func (h *TripsHandler) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		CreatorID:   trip.CreatorID.String(),
 		CreatedAt:   trip.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   trip.UpdatedAt.Format(time.RFC3339),
+		// NEW
+		Budget: dto.TripBudgetResponse{
+			Food:      food,
+			Hotel:     hotel,
+			Shopping:  shopping,
+			Transport: transport,
+			Total:     trip.TotalBudget,
+		},
 	}}
 
 	utils.WriteJSONResponse(w, http.StatusCreated, resp)
@@ -462,6 +513,24 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// NEW: ดึง budget breakdown จาก budget_categories
+	var food, hotel, shopping, transport float64
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT food, hotel, shopping, transport
+           FROM budget_categories
+          WHERE trip_id = $1 AND order_index = 1`,
+		t.ID,
+	).Scan(&food, &hotel, &shopping, &transport)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			food, hotel, shopping, transport = 0, 0, 0, 0
+		} else {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+	}
+
 	rows, err := h.db.Query(context.Background(),
 		`SELECT tm.user_id, tm.role, tm.status, tm.availability_submitted, tm.invited_at, tm.joined_at,
                 COALESCE(u.email, '') as username
@@ -566,6 +635,14 @@ func (h *TripsHandler) TripDetail(w http.ResponseWriter, r *http.Request) {
 			CreatorID:   t.CreatorID.String(),
 			CreatedAt:   t.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:   t.UpdatedAt.Format(time.RFC3339),
+			// NEW
+			Budget: dto.TripBudgetResponse{
+				Food:      food,
+				Hotel:     hotel,
+				Shopping:  shopping,
+				Transport: transport,
+				Total:     t.TotalBudget,
+			},
 		},
 		Members:     members,
 		Permissions: perms,
@@ -614,21 +691,45 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ดึง trip ปัจจุบัน
 	var cur models.Trip
-	err = h.db.QueryRow(context.Background(),
+	err = h.db.QueryRow(
+		context.Background(),
 		`SELECT id, name, destination, start_date, end_date, description, status, total_budget, currency, creator_id, created_at, updated_at
-           FROM trips WHERE id = $1`, tripID).Scan(
-		&cur.ID, &cur.Name, &cur.Destination, &cur.StartDate, &cur.EndDate, &cur.Description, &cur.Status, &cur.TotalBudget, &cur.Currency, &cur.CreatorID, &cur.CreatedAt, &cur.UpdatedAt,
+		   FROM trips
+		  WHERE id = $1`,
+		tripID,
+	).Scan(
+		&cur.ID,
+		&cur.Name,
+		&cur.Destination,
+		&cur.StartDate,
+		&cur.EndDate,
+		&cur.Description,
+		&cur.Status,
+		&cur.TotalBudget,
+		&cur.Currency,
+		&cur.CreatorID,
+		&cur.CreatedAt,
+		&cur.UpdatedAt,
 	)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
 		return
 	}
 
+	// ต้องเป็น creator (โดยตรง หรือเป็น member role=creator)
 	if requesterID != cur.CreatorID {
 		var exists bool
-		if err := h.db.QueryRow(context.Background(),
-			`SELECT EXISTS(SELECT 1 FROM trip_members WHERE trip_id = $1 AND user_id = $2 AND LOWER(role) = 'creator')`,
+		if err := h.db.QueryRow(
+			context.Background(),
+			`SELECT EXISTS(
+                 SELECT 1
+                   FROM trip_members
+                  WHERE trip_id = $1
+                    AND user_id = $2
+                    AND LOWER(role) = 'creator'
+             )`,
 			cur.ID, requesterID,
 		).Scan(&exists); err != nil || !exists {
 			utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "Only creator can update this trip")
@@ -636,6 +737,7 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// อ่าน request body
 	var req dto.UpdateTripRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -644,18 +746,22 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ----------- field ทั่วไป -----------
 	name := cur.Name
 	if req.Name != nil {
 		name = strings.TrimSpace(*req.Name)
 	}
+
 	destination := cur.Destination
 	if req.Destination != nil {
 		destination = strings.TrimSpace(*req.Destination)
 	}
+
 	description := cur.Description
 	if req.Description != nil {
 		description = *req.Description
 	}
+
 	status := cur.Status
 	if req.Status != nil {
 		st := strings.ToLower(strings.TrimSpace(*req.Status))
@@ -668,42 +774,104 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ----------- วันที่: ใช้ StartDate / EndDate (YYYY-MM-DD) -----------
 	startDate := cur.StartDate
-	if req.StartMonth != nil {
-		sm := strings.TrimSpace(*req.StartMonth)
-		t, err := time.Parse("2006-01", sm)
+	if req.StartDate != nil {
+		sd := strings.TrimSpace(*req.StartDate)
+		t, err := time.Parse("2006-01-02", sd)
 		if err != nil {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "start_month must be YYYY-MM")
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "start_date must be YYYY-MM-DD")
 			return
 		}
-		startDate = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		startDate = t
 	}
+
 	endDate := cur.EndDate
-	if req.EndMonth != nil {
-		em := strings.TrimSpace(*req.EndMonth)
-		t, err := time.Parse("2006-01", em)
+	if req.EndDate != nil {
+		ed := strings.TrimSpace(*req.EndDate)
+		t, err := time.Parse("2006-01-02", ed)
 		if err != nil {
-			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_month must be YYYY-MM")
+			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_date must be YYYY-MM-DD")
 			return
 		}
-		endDate = time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		endDate = t
 	}
+
 	if endDate.Before(startDate) {
-		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_month cannot be before start_month")
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "end_date cannot be before start_date")
 		return
 	}
 
+	// ----------- ดึง budget เดิมจาก budget_categories -----------
+	var curFood, curHotel, curShopping, curTransport float64
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT food, hotel, shopping, transport
+           FROM budget_categories
+          WHERE trip_id = $1 AND order_index = 1`,
+		cur.ID,
+	).Scan(&curFood, &curHotel, &curShopping, &curTransport)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			curFood, curHotel, curShopping, curTransport = 0, 0, 0, 0
+		} else {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+	}
+
+	newFood := curFood
+	if req.Food != nil {
+		newFood = *req.Food
+	}
+	newHotel := curHotel
+	if req.Hotel != nil {
+		newHotel = *req.Hotel
+	}
+	newShopping := curShopping
+	if req.Shopping != nil {
+		newShopping = *req.Shopping
+	}
+	newTransport := curTransport
+	if req.Transport != nil {
+		newTransport = *req.Transport
+	}
+
+	if newFood < 0 || newHotel < 0 || newShopping < 0 || newTransport < 0 {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "budget categories cannot be negative")
+		return
+	}
+
+	// base = ของเดิมใน trips
 	totalBudget := cur.TotalBudget
+
+	// ถ้าส่ง total_budget มาโดยตรง
 	if req.TotalBudget != nil {
 		if *req.TotalBudget < 0 {
 			utils.WriteErrorResponse(w, http.StatusBadRequest, "Validation error", "total_budget cannot be negative")
 			return
 		}
 		totalBudget = *req.TotalBudget
+
+		// ถ้าก่อนหน้าไม่มี breakdown เลย และ request รอบนี้ก็ไม่ได้ส่ง breakdown มาด้วย
+		// → เอา totalBudget ลงที่ food ช่องเดียว (ไว้กันกรณี client เก่าใช้แค่ total_budget)
+		if req.Food == nil && req.Hotel == nil && req.Shopping == nil && req.Transport == nil &&
+			curFood == 0 && curHotel == 0 && curShopping == 0 && curTransport == 0 {
+			newFood = totalBudget
+			newHotel, newShopping, newTransport = 0, 0, 0
+		}
+	}
+
+	// ถ้ามีส่ง breakdown มาอย่างน้อย 1 หมวด → ให้ totalBudget = sum(breakdown)
+	if req.Food != nil || req.Hotel != nil || req.Shopping != nil || req.Transport != nil {
+		totalBudget = newFood + newHotel + newShopping + newTransport
 	}
 
 	now := time.Now()
-	_, err = h.db.Exec(context.Background(),
+
+	// ----------- อัปเดต trips -----------
+	_, err = h.db.Exec(
+		context.Background(),
 		`UPDATE trips
             SET name = $1,
                 destination = $2,
@@ -714,13 +882,45 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
                 total_budget = $7,
                 updated_at = $8
           WHERE id = $9`,
-		name, destination, description, startDate, endDate, status, totalBudget, now, cur.ID,
+		name,
+		destination,
+		description,
+		startDate,
+		endDate,
+		status,
+		totalBudget,
+		now,
+		cur.ID,
 	)
 	if err != nil {
 		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
 		return
 	}
 
+	// ----------- sync budget breakdown ไป budget_categories -----------
+	_, err = h.db.Exec(
+		context.Background(),
+		`INSERT INTO budget_categories (trip_id, order_index, food, hotel, shopping, transport)
+         VALUES ($1, 1, $2, $3, $4, $5)
+         ON CONFLICT (trip_id, order_index)
+         DO UPDATE SET
+            food = EXCLUDED.food,
+            hotel = EXCLUDED.hotel,
+            shopping = EXCLUDED.shopping,
+            transport = EXCLUDED.transport,
+            updated_at = now()`,
+		cur.ID,
+		newFood,
+		newHotel,
+		newShopping,
+		newTransport,
+	)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	// ----------- สร้าง response -----------
 	updated := dto.TripResponse{
 		ID:          cur.ID.String(),
 		Name:        name,
@@ -736,7 +936,128 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   now.Format(time.RFC3339),
 	}
 
+	// ถ้าคุณเพิ่ม dto.TripBudgetResponse และ field Budget ใน TripResponse แล้ว
+	// ให้เติมตรงนี้ได้เลย:
+	// updated.Budget = dto.TripBudgetResponse{
+	// 	Food:      newFood,
+	// 	Hotel:     newHotel,
+	// 	Shopping:  newShopping,
+	// 	Transport: newTransport,
+	// 	Total:     totalBudget,
+	// }
+
 	utils.WriteJSONResponse(w, http.StatusOK, dto.CreateTripResponse{Trip: updated})
+}
+
+// GetTripBudget handles GET /api/trips/{trip_id}/budget
+// @Summary Get trip budget
+// @Description Get total budget and category breakdown for a trip. Any member of the trip can view this.
+// @Tags trips
+// @Produce json
+// @Security BearerAuth
+// @Param trip_id path string true "Trip ID"
+// @Success 200 {object} dto.GetTripBudgetResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/budget [get]
+func (h *TripsHandler) GetTripBudget(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// เอา user_id จาก context (middleware auth ใส่ไว้ให้แล้ว)
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
+		return
+	}
+
+	// path: /api/trips/{trip_id}/budget
+	path := cleanPath(r.URL.Path) // ตัด trailing / ถ้ามี
+	trimmed := strings.TrimPrefix(path, "/api/trips/")
+	trimmed = strings.TrimSuffix(trimmed, "/budget")
+
+	tripID, err := uuid.Parse(trimmed)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
+		return
+	}
+
+	// ---------- เช็กสิทธิ์: ต้องเป็น creator หรือ member ของทริป ----------
+	var allowed bool
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT EXISTS(
+             SELECT 1 FROM trips
+              WHERE id = $1 AND creator_id = $2
+         ) OR EXISTS(
+             SELECT 1 FROM trip_members
+              WHERE trip_id = $1 AND user_id = $2
+         )`,
+		tripID, userID,
+	).Scan(&allowed)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	if !allowed {
+		utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "You are not a member of this trip")
+		return
+	}
+
+	// ---------- ดึง total_budget จาก trips ----------
+	var totalBudget float64
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT total_budget
+           FROM trips
+          WHERE id = $1`,
+		tripID,
+	).Scan(&totalBudget)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
+			return
+		}
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	// ---------- ดึง breakdown จาก budget_categories ----------
+	var food, hotel, shopping, transport float64
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT food, hotel, shopping, transport
+           FROM budget_categories
+          WHERE trip_id = $1 AND order_index = 1`,
+		tripID,
+	).Scan(&food, &hotel, &shopping, &transport)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// ไม่มี row → ถือว่า 0 ทุกหมวด
+			food, hotel, shopping, transport = 0, 0, 0, 0
+		} else {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+	}
+
+	resp := dto.GetTripBudgetResponse{
+		Budget: dto.TripBudgetResponse{
+			Food:      food,
+			Hotel:     hotel,
+			Shopping:  shopping,
+			Transport: transport,
+			Total:     totalBudget,
+		},
+	}
+
+	utils.WriteJSONResponse(w, http.StatusOK, resp)
 }
 
 // DeleteTrip handles DELETE /api/trips/{trip_id}
