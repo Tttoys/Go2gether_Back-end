@@ -208,3 +208,8 @@ type TripBudgetResponse struct {
 	Transport float64 `json:"transport"`
 	Total     float64 `json:"total"` // = total_budget ใน trips
 }
+
+// ใช้สำหรับ GET /api/trips/{trip_id}/budget
+type GetTripBudgetResponse struct {
+	Budget TripBudgetResponse `json:"budget"`
+}

@@ -949,6 +949,117 @@ func (h *TripsHandler) UpdateTrip(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSONResponse(w, http.StatusOK, dto.CreateTripResponse{Trip: updated})
 }
 
+// GetTripBudget handles GET /api/trips/{trip_id}/budget
+// @Summary Get trip budget
+// @Description Get total budget and category breakdown for a trip. Any member of the trip can view this.
+// @Tags trips
+// @Produce json
+// @Security BearerAuth
+// @Param trip_id path string true "Trip ID"
+// @Success 200 {object} dto.GetTripBudgetResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /api/trips/{trip_id}/budget [get]
+func (h *TripsHandler) GetTripBudget(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// เอา user_id จาก context (middleware auth ใส่ไว้ให้แล้ว)
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid user context")
+		return
+	}
+
+	// path: /api/trips/{trip_id}/budget
+	path := cleanPath(r.URL.Path) // ตัด trailing / ถ้ามี
+	trimmed := strings.TrimPrefix(path, "/api/trips/")
+	trimmed = strings.TrimSuffix(trimmed, "/budget")
+
+	tripID, err := uuid.Parse(trimmed)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusBadRequest, "Invalid trip id", "trip_id must be UUID")
+		return
+	}
+
+	// ---------- เช็กสิทธิ์: ต้องเป็น creator หรือ member ของทริป ----------
+	var allowed bool
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT EXISTS(
+             SELECT 1 FROM trips
+              WHERE id = $1 AND creator_id = $2
+         ) OR EXISTS(
+             SELECT 1 FROM trip_members
+              WHERE trip_id = $1 AND user_id = $2
+         )`,
+		tripID, userID,
+	).Scan(&allowed)
+	if err != nil {
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+	if !allowed {
+		utils.WriteErrorResponse(w, http.StatusForbidden, "Forbidden", "You are not a member of this trip")
+		return
+	}
+
+	// ---------- ดึง total_budget จาก trips ----------
+	var totalBudget float64
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT total_budget
+           FROM trips
+          WHERE id = $1`,
+		tripID,
+	).Scan(&totalBudget)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			utils.WriteErrorResponse(w, http.StatusNotFound, "Not Found", "Trip not found")
+			return
+		}
+		utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+		return
+	}
+
+	// ---------- ดึง breakdown จาก budget_categories ----------
+	var food, hotel, shopping, transport float64
+	err = h.db.QueryRow(
+		context.Background(),
+		`SELECT food, hotel, shopping, transport
+           FROM budget_categories
+          WHERE trip_id = $1 AND order_index = 1`,
+		tripID,
+	).Scan(&food, &hotel, &shopping, &transport)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// ไม่มี row → ถือว่า 0 ทุกหมวด
+			food, hotel, shopping, transport = 0, 0, 0, 0
+		} else {
+			utils.WriteErrorResponse(w, http.StatusInternalServerError, "Database error", err.Error())
+			return
+		}
+	}
+
+	resp := dto.GetTripBudgetResponse{
+		Budget: dto.TripBudgetResponse{
+			Food:      food,
+			Hotel:     hotel,
+			Shopping:  shopping,
+			Transport: transport,
+			Total:     totalBudget,
+		},
+	}
+
+	utils.WriteJSONResponse(w, http.StatusOK, resp)
+}
+
 // DeleteTrip handles DELETE /api/trips/{trip_id}
 // @Summary Delete a trip
 // @Tags trips
