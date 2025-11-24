@@ -2465,7 +2465,7 @@ func (h *TripsHandler) GenerateAvailablePeriods(w http.ResponseWriter, r *http.R
 						ctx,
 						uid,
 						TypeTripUpdate, // ใช้ประเภทอัปเดตทริป
-						"Updated Avvailability Periods",
+						"Updated Availability Periods",
 						&msg,
 						map[string]any{
 							"trip_id":          tripID.String(),
