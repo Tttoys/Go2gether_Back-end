@@ -1,8 +1,3 @@
 {
-  "version": 2,
-  "functions": {
-    "api/*.go": {
-      "runtime": "go1.x"
-    }
-  }
+  "$schema": "https://openapi.vercel.sh/vercel.json"
 }
