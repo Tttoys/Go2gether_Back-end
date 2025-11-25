@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
-	"GO2GETHER_BACK-END/internal/config"
-	"GO2GETHER_BACK-END/internal/dto"
-	"GO2GETHER_BACK-END/internal/middleware"
-	"GO2GETHER_BACK-END/internal/models"
-	"GO2GETHER_BACK-END/internal/utils"
+	"github.com/Tttoys/Go2gether-Backend/internal/config"
+	"github.com/Tttoys/Go2gether-Backend/internal/dto"
+	"github.com/Tttoys/Go2gether-Backend/internal/middleware"
+	"github.com/Tttoys/Go2gether-Backend/internal/models"
+	"github.com/Tttoys/Go2gether-Backend/internal/utils"
 )
 
 // AuthHandler handles authentication-related HTTP requests

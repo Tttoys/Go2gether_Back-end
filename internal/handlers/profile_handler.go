@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"GO2GETHER_BACK-END/internal/dto"
-	"GO2GETHER_BACK-END/internal/utils"
+	"github.com/Tttoys/Go2gether-Backend/internal/dto"
+	"github.com/Tttoys/Go2gether-Backend/internal/utils"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"

@@ -9,8 +9,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"GO2GETHER_BACK-END/internal/config"
-	"GO2GETHER_BACK-END/internal/utils"
+	"github.com/Tttoys/Go2gether-Backend/internal/config"
+	"github.com/Tttoys/Go2gether-Backend/internal/utils"
 )
 
 // JWTClaims represents the claims in the JWT token
@@ -100,21 +100,21 @@ func AuthMiddleware(next http.HandlerFunc, cfg *config.JWTConfig) http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-            utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Authorization header required")
+			utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Authorization header required")
 			return
 		}
 
 		// Extract token from "Bearer <token>"
 		tokenParts := strings.Split(authHeader, " ")
 		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-            utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid authorization header format")
+			utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid authorization header format")
 			return
 		}
 
 		tokenString := tokenParts[1]
 		claims, err := ValidateToken(tokenString, cfg)
 		if err != nil {
-            utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid token")
+			utils.WriteErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid token")
 			return
 		}
 

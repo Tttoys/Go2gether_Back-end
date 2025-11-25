@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"GO2GETHER_BACK-END/internal/config"
-	"GO2GETHER_BACK-END/internal/handlers"
-	"GO2GETHER_BACK-END/internal/middleware"
+	"github.com/Tttoys/Go2gether-Backend/internal/config"
+	"github.com/Tttoys/Go2gether-Backend/internal/handlers"
+	"github.com/Tttoys/Go2gether-Backend/internal/middleware"
 
 	httpSwagger "github.com/swaggo/http-swagger"
 )

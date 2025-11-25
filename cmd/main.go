@@ -32,10 +32,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/cors"
 
-	_ "GO2GETHER_BACK-END/docs" // This is required for swagger
-	"GO2GETHER_BACK-END/internal/config"
-	"GO2GETHER_BACK-END/internal/handlers"
-	"GO2GETHER_BACK-END/internal/routes"
+	_ "github.com/Tttoys/Go2gether-Backend/docs"
+	"github.com/Tttoys/Go2gether-Backend/internal/config"
+	"github.com/Tttoys/Go2gether-Backend/internal/handlers"
+	"github.com/Tttoys/Go2gether-Backend/internal/routes"
 )
 
 func main() {

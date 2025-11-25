@@ -9,7 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"GO2GETHER_BACK-END/internal/config"
+	"github.com/Tttoys/Go2gether-Backend/internal/config"
 )
 
 // ResetTokenClaims represents the JWT claims for password reset token

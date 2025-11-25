@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"sync"
 
-	"GO2GETHER_BACK-END/internal/config"
-	"GO2GETHER_BACK-END/internal/handlers"
-	"GO2GETHER_BACK-END/internal/routes"
+	"github.com/Tttoys/Go2gether-Backend/internal/config"
+	"github.com/Tttoys/Go2gether-Backend/internal/handlers"
+	"github.com/Tttoys/Go2gether-Backend/internal/routes"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
