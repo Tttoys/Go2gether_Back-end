@@ -4,5 +4,11 @@
     "api/*.go": {
       "runtime": "@vercel/go@3.2.3"
     }
-  }
+  },
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.go" },
+    { "source": "/(.*)", "destination": "/api/index.go" }
+  ]
 }
+
