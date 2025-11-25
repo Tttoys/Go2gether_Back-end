@@ -1,2 +1,15 @@
+# Build outputs
+/bin/
+*.exe
+*.out
+
+# Env & config
 .env
+.env.*
+.air.toml
+
+# IDE
+.vscode/
+.idea/
+
 .DS_Store
