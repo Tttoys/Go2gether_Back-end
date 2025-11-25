@@ -1,4 +1,4 @@
-module github.com/Tttoys/Go2gether-Backend
+module GO2GETHER_BACK-END
 
 go 1.24.2
 

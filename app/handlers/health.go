@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Tttoys/Go2gether-Backend/internal/dto"
-	"github.com/Tttoys/Go2gether-Backend/internal/utils"
+	"GO2GETHER_BACK-END/app/dto"
+	"GO2GETHER_BACK-END/app/utils"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )

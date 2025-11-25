@@ -9,8 +9,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/Tttoys/Go2gether-Backend/internal/config"
-	"github.com/Tttoys/Go2gether-Backend/internal/utils"
+	"GO2GETHER_BACK-END/app/config"
+	"GO2GETHER_BACK-END/app/utils"
 )
 
 // JWTClaims represents the claims in the JWT token

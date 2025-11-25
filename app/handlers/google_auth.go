@@ -13,11 +13,11 @@ import (
 	googleOAuth2 "google.golang.org/api/oauth2/v2"
 	"google.golang.org/api/option"
 
-	"github.com/Tttoys/Go2gether-Backend/internal/config"
-	"github.com/Tttoys/Go2gether-Backend/internal/dto"
-	"github.com/Tttoys/Go2gether-Backend/internal/middleware"
-	"github.com/Tttoys/Go2gether-Backend/internal/models"
-	"github.com/Tttoys/Go2gether-Backend/internal/utils"
+	"GO2GETHER_BACK-END/app/config"
+	"GO2GETHER_BACK-END/app/dto"
+	"GO2GETHER_BACK-END/app/middleware"
+	"GO2GETHER_BACK-END/app/models"
+	"GO2GETHER_BACK-END/app/utils"
 )
 
 // GoogleAuthHandler handles Google OAuth authentication

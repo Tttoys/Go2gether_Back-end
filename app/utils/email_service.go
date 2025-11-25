@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/smtp"
 
-	"github.com/Tttoys/Go2gether-Backend/internal/config"
+	"GO2GETHER_BACK-END/app/config"
 )
 
 // EmailService handles email sending operations

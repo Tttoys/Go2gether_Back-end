@@ -11,10 +11,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Tttoys/Go2gether-Backend/internal/config"
-	"github.com/Tttoys/Go2gether-Backend/internal/dto"
-	"github.com/Tttoys/Go2gether-Backend/internal/middleware"
-	"github.com/Tttoys/Go2gether-Backend/internal/utils"
+	"GO2GETHER_BACK-END/app/config"
+	"GO2GETHER_BACK-END/app/dto"
+	"GO2GETHER_BACK-END/app/middleware"
+	"GO2GETHER_BACK-END/app/utils"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
